@@ -7,7 +7,6 @@ use std::ptr;
 /// The resulting byte string is always nul-terminated (just like a C string).
 ///
 /// [`ngx_str_t`]: https://nginx.org/en/docs/dev/development_guide.html#string_overview
-#[macro_export]
 macro_rules! ngx_string {
     ($s:expr) => {{
         ngx_str_t {
@@ -15,6 +14,19 @@ macro_rules! ngx_string {
             data: concat!($s, "\0").as_ptr() as *mut u8,
         }
     }};
+}
+
+/// [`NGX_LOG_DEBUG_HTTP`]: https://nginx.org/en/docs/dev/development_guide.html#logging
+macro_rules! ngx_log_debug_http {
+    ( $request:expr, $($arg:tt)* ) => {
+        let log = unsafe { (*$request.connection()).log };
+        let level = NGX_LOG_DEBUG as ngx_uint_t;
+        let fmt = std::ffi::CString::new("%s").unwrap();
+        let c_message = std::ffi::CString::new(format!($($arg)*)).unwrap();
+        unsafe {
+            ngx_log_error_core(level, log, 0, fmt.as_ptr(), c_message.as_ptr());
+        }
+    }
 }
 
 #[no_mangle]
@@ -133,6 +145,10 @@ impl Request {
         &mut *r.cast::<Request>()
     }
 
+    fn connection(&self) -> *mut ngx_connection_t {
+        self.0.connection
+    }
+
     fn range(&self) -> Option<&str> {
         unsafe { (*self.0.headers_in.range).value.to_str().ok() }
     }
@@ -153,6 +169,8 @@ impl Request {
 #[no_mangle]
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
+
+    ngx_log_debug_http!(req, "http car_range handler");
 
     // Check if range request
     let range = req.range();
