@@ -20,7 +20,7 @@ macro_rules! ngx_string {
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
-        name: ngx_string!("hello_world"), /* directive */
+        name: ngx_string!("car_range"), /* directive */
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t, /* location context and takes no arguments*/
         set: Some(ngx_car_range), /* configuration setup function */
         conf: 0,                  /* No offset. Only one context is supported. */
@@ -154,6 +154,7 @@ impl Request {
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
+    // Check if range request
     let range = req.range();
 
     let body = if let Some(range_val) = range {
@@ -170,6 +171,7 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
         return status;
     }
 
+    // put the string into the buffer pool so it will be dealocated automatically
     let buf = unsafe {
         let bstr = &body;
         let mut buf = ngx_create_temp_buf(req.0.pool, bstr.len());
