@@ -1,3 +1,6 @@
+mod bindings;
+pub mod module;
+
 use cid::Cid;
 use integer_encoding::{VarIntReader, VarIntWriter};
 use prost::Message;
