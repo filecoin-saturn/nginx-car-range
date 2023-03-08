@@ -161,6 +161,10 @@ impl Request {
         self.0.headers_out.content_length_n = n as off_t;
     }
 
+    fn set_content_type(&mut self, ct: ngx_str_t) {
+        self.0.headers_out.content_type = ct;
+    }
+
     fn send_header(&mut self) -> ngx_int_t {
         unsafe { ngx_http_send_header(&mut self.0) }
     }
@@ -173,16 +177,18 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     ngx_log_debug_http!(req, "http car_range handler");
 
     // Check if range request
-    let range = req.range();
+    // let range = req.range();
 
-    let body = if let Some(range_val) = range {
-        format!("Detected range header {}", range_val)
-    } else {
-        "Not a range request".to_string()
-    };
+    let body = "Not a range request".to_string();
+    // if let Some(range_val) = range {
+    //     format!("Detected range header {}", range_val)
+    // } else {
+    //     "Not a range request".to_string()
+    // };
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
+    req.set_content_type(ngx_string!("text/plain"));
 
     let status = req.send_header();
     if status == NGX_ERROR as ngx_int_t || status != NGX_OK as ngx_int_t {
