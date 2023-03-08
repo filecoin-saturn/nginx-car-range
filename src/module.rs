@@ -132,6 +132,135 @@ impl ngx_str_t {
     }
 }
 
+pub struct NgxStr([u_char]);
+
+impl NgxStr {
+    /// Create an [`NgxStr`] from an [`ngx_str_t`].
+    ///
+    /// [`ngx_str_t`]: https://nginx.org/en/docs/dev/development_guide.html#string_overview
+    pub unsafe fn from_ngx_str<'a>(str: ngx_str_t) -> &'a NgxStr {
+        // SAFETY: The caller has provided a valid `ngx_str_t` with a `data` pointer that points
+        // to range of bytes of at least `len` bytes, whose content remains valid and doesn't
+        // change for the lifetime of the returned `NgxStr`.
+        std::slice::from_raw_parts(str.data, str.len).into()
+    }
+
+    /// Access the [`NgxStr`] as a byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Yields a `&str` slice if the [`NgxStr`] contains valid UTF-8.
+    pub fn to_str(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(self.as_bytes())
+    }
+
+    /// Converts an [`NgxStr`] into a [`Cow<str>`], replacing invalid UTF-8 sequences.
+    ///
+    /// See [`String::from_utf8_lossy`].
+    pub fn to_string_lossy(&self) -> std::borrow::Cow<str> {
+        String::from_utf8_lossy(self.as_bytes())
+    }
+
+    /// Returns `true` if the [`NgxStr`] is empty, otherwise `false`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<&[u8]> for &NgxStr {
+    fn from(bytes: &[u8]) -> Self {
+        // SAFETY: An `NgxStr` is identical to a `[u8]` slice, given `u_char` is an alias for `u8`.
+        unsafe { &*(bytes as *const [u8] as *const NgxStr) }
+    }
+}
+
+trait Buffer {
+    fn as_ngx_buf(&self) -> *const ngx_buf_t;
+
+    fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t;
+
+    fn as_bytes(&self) -> &[u8] {
+        let buf = self.as_ngx_buf();
+        unsafe { std::slice::from_raw_parts((*buf).pos, self.len()) }
+    }
+
+    fn len(&self) -> usize {
+        let buf = self.as_ngx_buf();
+        unsafe {
+            let pos = (*buf).pos;
+            let last = (*buf).last;
+            assert!(last >= pos);
+            usize::wrapping_sub(last as _, pos as _)
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn set_last_buf(&mut self, last: bool) {
+        let buf = self.as_ngx_buf_mut();
+        unsafe {
+            (*buf).set_last_buf(if last { 1 } else { 0 });
+        }
+    }
+
+    fn set_last_in_chain(&mut self, last: bool) {
+        let buf = self.as_ngx_buf_mut();
+        unsafe {
+            (*buf).set_last_in_chain(if last { 1 } else { 0 });
+        }
+    }
+}
+
+pub struct TemporaryBuffer(*mut ngx_buf_t);
+
+impl TemporaryBuffer {
+    pub fn from_ngx_buf(buf: *mut ngx_buf_t) -> TemporaryBuffer {
+        assert!(!buf.is_null());
+        TemporaryBuffer(buf)
+    }
+}
+
+impl Buffer for TemporaryBuffer {
+    fn as_ngx_buf(&self) -> *const ngx_buf_t {
+        self.0
+    }
+
+    fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t {
+        self.0
+    }
+}
+
+struct Pool(*mut ngx_pool_t);
+
+impl Pool {
+    pub unsafe fn from_ngx_pool(pool: *mut ngx_pool_t) -> Pool {
+        assert!(!pool.is_null());
+        Pool(pool)
+    }
+
+    pub fn create_buffer(&mut self, size: usize) -> Option<TemporaryBuffer> {
+        let buf = unsafe { ngx_create_temp_buf(self.0, size) };
+        if buf.is_null() {
+            return None;
+        }
+
+        Some(TemporaryBuffer::from_ngx_buf(buf))
+    }
+
+    pub fn create_buffer_from_str(&mut self, str: &str) -> Option<TemporaryBuffer> {
+        let mut buffer = self.create_buffer(str.len())?;
+        unsafe {
+            let mut buf = buffer.as_ngx_buf_mut();
+            ptr::copy_nonoverlapping(str.as_ptr(), (*buf).pos, str.len());
+            (*buf).last = (*buf).pos.add(str.len());
+        }
+        Some(buffer)
+    }
+}
+
 #[repr(transparent)]
 pub struct Request(ngx_http_request_t);
 
@@ -147,6 +276,12 @@ impl Request {
 
     fn connection(&self) -> *mut ngx_connection_t {
         self.0.connection
+    }
+
+    /// Request pool.
+    fn pool(&self) -> Pool {
+        // SAFETY: This request is allocated from `pool`, thus must be a valid pool.
+        unsafe { Pool::from_ngx_pool(self.0.pool) }
     }
 
     fn range(&self) -> Option<&str> {
@@ -168,6 +303,15 @@ impl Request {
     fn send_header(&mut self) -> ngx_int_t {
         unsafe { ngx_http_send_header(&mut self.0) }
     }
+
+    fn user_agent(&self) -> &NgxStr {
+        unsafe { NgxStr::from_ngx_str((*self.0.headers_in.user_agent).value) }
+    }
+
+    fn is_main(&self) -> bool {
+        let main = self.0.main.cast();
+        std::ptr::eq(self, main)
+    }
 }
 
 #[no_mangle]
@@ -176,16 +320,8 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
 
     ngx_log_debug!(req, "http car_range handler");
 
-    // Check if range request
-    let range = req.range();
-
-    let body = if let Some(range_val) = range {
-        format!("Detected range header {}", range_val)
-    } else {
-        "Not a range request".to_string()
-    };
-
-    ngx_log_debug!(req, "Body {}", body);
+    let user_agent = req.user_agent();
+    let body = format!("Hello, {}!\n", user_agent.to_string_lossy());
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
@@ -195,29 +331,18 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     if status == NGX_ERROR as ngx_int_t || status != NGX_OK as ngx_int_t {
         return status;
     }
-
-    ngx_log_debug!(req, "Status {}", status);
-
-    // put the string into the buffer pool so it will be dealocated automatically
-    let buf = unsafe {
-        let bstr = &body;
-        let mut buf = ngx_create_temp_buf(req.0.pool, bstr.len());
-        std::ptr::copy_nonoverlapping(body.as_ptr(), (*buf).pos, bstr.len());
-        (*buf).last = (*buf).pos.add(bstr.len());
-        (*buf).set_last_buf(1);
-        (*buf).set_last_in_chain(1);
-        buf
+    // Send body
+    let mut buf = match req.pool().create_buffer_from_str(&body) {
+        Some(buf) => buf,
+        None => return NGX_HTTP_INTERNAL_SERVER_ERROR as ngx_int_t,
     };
+    assert!(&buf.as_bytes()[..7] == b"Hello, ");
+    buf.set_last_buf(req.is_main());
+    buf.set_last_in_chain(true);
 
-    ngx_log_debug!(req, "created buffer");
-
-    // Insertion in the buffer chain.
     let mut out = ngx_chain_t {
-        buf,
-        // only one buffer
+        buf: buf.as_ngx_buf_mut(),
         next: ptr::null_mut(),
     };
-
-    // Send the body, and return the status code of the output filter chain.
-    unsafe { ngx_http_output_filter(&mut req.0, &mut out) as ngx_int_t }
+    unsafe { ngx_http_output_filter(&mut req.0, &mut out) }
 }
