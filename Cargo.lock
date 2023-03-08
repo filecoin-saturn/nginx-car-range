@@ -505,11 +505,19 @@ dependencies = [
  "cid 0.10.1",
  "hex",
  "integer-encoding",
+ "nginx-rs",
  "num_enum",
  "prost",
  "prost-build",
  "serde",
  "serde_ipld_dagcbor",
+]
+
+[[package]]
+name = "nginx-rs"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
 ]
 
 [[package]]

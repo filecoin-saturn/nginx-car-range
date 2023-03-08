@@ -16,6 +16,7 @@ anyhow = "1.0.69"
 integer-encoding = "3.0.4"
 prost = "0.11"
 num_enum = "0.5.11"
+nginx-rs = { version = "0.1.0", path = "./nginx-rs" }
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -28,3 +29,8 @@ bindgen = "0.64"
 # help debugging
 [profile.release]
 debug = true
+
+[workspace]
+members = [
+    "nginx-rs",
+]
