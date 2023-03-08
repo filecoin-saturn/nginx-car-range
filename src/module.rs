@@ -1,4 +1,5 @@
 use crate::bindings::*;
+use crate::utils::{Buffer, HTTPModule, Merge, NgxStr, Pool};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -55,17 +56,17 @@ static mut ngx_car_range_commands: [ngx_command_t; 2] = [
 
 #[no_mangle]
 static ngx_car_range_module_ctx: ngx_http_module_t = ngx_http_module_t {
-    preconfiguration: None,
-    postconfiguration: None,
+    preconfiguration: Some(Module::preconfiguration),
+    postconfiguration: Some(Module::postconfiguration),
 
-    create_main_conf: None,
-    init_main_conf: None,
+    create_main_conf: Some(Module::create_main_conf),
+    init_main_conf: Some(Module::init_main_conf),
 
-    create_srv_conf: None,
-    merge_srv_conf: None,
+    create_srv_conf: Some(Module::create_srv_conf),
+    merge_srv_conf: Some(Module::merge_srv_conf),
 
-    create_loc_conf: None,
-    merge_loc_conf: None,
+    create_loc_conf: Some(Module::create_loc_conf),
+    merge_loc_conf: Some(Module::merge_loc_conf),
 };
 
 #[no_mangle]
@@ -100,6 +101,31 @@ pub static mut ngx_car_range_module: ngx_module_t = ngx_module_t {
     spare_hook7: 0,
 };
 
+struct Module;
+
+impl HTTPModule for Module {
+    type MainConf = ();
+    type SrvConf = ();
+    type LocConf = LocConf;
+}
+
+#[derive(Default)]
+struct LocConf {
+    text: String,
+}
+
+impl Merge for LocConf {
+    fn merge(&mut self, prev: &LocConf) {
+        if self.text.is_empty() {
+            self.text = String::from(if !prev.text.is_empty() {
+                &prev.text
+            } else {
+                ""
+            });
+        }
+    }
+}
+
 unsafe fn ngx_http_conf_get_module_loc_conf(
     cf: *mut ngx_conf_t,
     module: &ngx_module_t,
@@ -129,135 +155,6 @@ impl ngx_str_t {
         // change for the lifetime of the returned `NgxStr`.
         let bytes = unsafe { std::slice::from_raw_parts(self.data, self.len) };
         std::str::from_utf8(bytes)
-    }
-}
-
-pub struct NgxStr([u_char]);
-
-impl NgxStr {
-    /// Create an [`NgxStr`] from an [`ngx_str_t`].
-    ///
-    /// [`ngx_str_t`]: https://nginx.org/en/docs/dev/development_guide.html#string_overview
-    pub unsafe fn from_ngx_str<'a>(str: ngx_str_t) -> &'a NgxStr {
-        // SAFETY: The caller has provided a valid `ngx_str_t` with a `data` pointer that points
-        // to range of bytes of at least `len` bytes, whose content remains valid and doesn't
-        // change for the lifetime of the returned `NgxStr`.
-        std::slice::from_raw_parts(str.data, str.len).into()
-    }
-
-    /// Access the [`NgxStr`] as a byte slice.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Yields a `&str` slice if the [`NgxStr`] contains valid UTF-8.
-    pub fn to_str(&self) -> Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(self.as_bytes())
-    }
-
-    /// Converts an [`NgxStr`] into a [`Cow<str>`], replacing invalid UTF-8 sequences.
-    ///
-    /// See [`String::from_utf8_lossy`].
-    pub fn to_string_lossy(&self) -> std::borrow::Cow<str> {
-        String::from_utf8_lossy(self.as_bytes())
-    }
-
-    /// Returns `true` if the [`NgxStr`] is empty, otherwise `false`.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl From<&[u8]> for &NgxStr {
-    fn from(bytes: &[u8]) -> Self {
-        // SAFETY: An `NgxStr` is identical to a `[u8]` slice, given `u_char` is an alias for `u8`.
-        unsafe { &*(bytes as *const [u8] as *const NgxStr) }
-    }
-}
-
-trait Buffer {
-    fn as_ngx_buf(&self) -> *const ngx_buf_t;
-
-    fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t;
-
-    fn as_bytes(&self) -> &[u8] {
-        let buf = self.as_ngx_buf();
-        unsafe { std::slice::from_raw_parts((*buf).pos, self.len()) }
-    }
-
-    fn len(&self) -> usize {
-        let buf = self.as_ngx_buf();
-        unsafe {
-            let pos = (*buf).pos;
-            let last = (*buf).last;
-            assert!(last >= pos);
-            usize::wrapping_sub(last as _, pos as _)
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    fn set_last_buf(&mut self, last: bool) {
-        let buf = self.as_ngx_buf_mut();
-        unsafe {
-            (*buf).set_last_buf(if last { 1 } else { 0 });
-        }
-    }
-
-    fn set_last_in_chain(&mut self, last: bool) {
-        let buf = self.as_ngx_buf_mut();
-        unsafe {
-            (*buf).set_last_in_chain(if last { 1 } else { 0 });
-        }
-    }
-}
-
-pub struct TemporaryBuffer(*mut ngx_buf_t);
-
-impl TemporaryBuffer {
-    pub fn from_ngx_buf(buf: *mut ngx_buf_t) -> TemporaryBuffer {
-        assert!(!buf.is_null());
-        TemporaryBuffer(buf)
-    }
-}
-
-impl Buffer for TemporaryBuffer {
-    fn as_ngx_buf(&self) -> *const ngx_buf_t {
-        self.0
-    }
-
-    fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t {
-        self.0
-    }
-}
-
-struct Pool(*mut ngx_pool_t);
-
-impl Pool {
-    pub unsafe fn from_ngx_pool(pool: *mut ngx_pool_t) -> Pool {
-        assert!(!pool.is_null());
-        Pool(pool)
-    }
-
-    pub fn create_buffer(&mut self, size: usize) -> Option<TemporaryBuffer> {
-        let buf = unsafe { ngx_create_temp_buf(self.0, size) };
-        if buf.is_null() {
-            return None;
-        }
-
-        Some(TemporaryBuffer::from_ngx_buf(buf))
-    }
-
-    pub fn create_buffer_from_str(&mut self, str: &str) -> Option<TemporaryBuffer> {
-        let mut buffer = self.create_buffer(str.len())?;
-        unsafe {
-            let mut buf = buffer.as_ngx_buf_mut();
-            ptr::copy_nonoverlapping(str.as_ptr(), (*buf).pos, str.len());
-            (*buf).last = (*buf).pos.add(str.len());
-        }
-        Some(buffer)
     }
 }
 
