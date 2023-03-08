@@ -138,8 +138,10 @@ unsafe fn ngx_http_conf_get_module_loc_conf(
 unsafe extern "C" fn ngx_car_range(
     cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
+    conf: *mut c_void,
 ) -> *mut c_char {
+    let conf = &mut *(conf as *mut LocConf);
+
     let clcf = ngx_http_conf_get_module_loc_conf(cf, &ngx_http_core_module)
         as *mut ngx_http_core_loc_conf_t;
     (*clcf).handler = Some(ngx_car_range_handler);
@@ -209,13 +211,21 @@ impl Request {
         let main = self.0.main.cast();
         std::ptr::eq(self, main)
     }
+
+    fn discard_request_body(&mut self) -> ngx_int_t {
+        unsafe { ngx_http_discard_request_body(&mut self.0) as ngx_int_t }
+    }
 }
 
 #[no_mangle]
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
-    ngx_log_debug!(req, "http car_range handler");
+    if req.discard_request_body() != NGX_OK as ngx_int_t {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR as ngx_int_t;
+    }
+
+    // ngx_log_debug!(req, "http car_range handler");
 
     let user_agent = req.user_agent();
     let body = format!("Hello, {}!\n", user_agent.to_string_lossy());
