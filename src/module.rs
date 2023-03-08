@@ -17,7 +17,7 @@ macro_rules! ngx_string {
 }
 
 /// [`NGX_LOG_DEBUG_HTTP`]: https://nginx.org/en/docs/dev/development_guide.html#logging
-macro_rules! ngx_log_debug_http {
+macro_rules! ngx_log_debug {
     ( $request:expr, $($arg:tt)* ) => {
         let log = unsafe { (*$request.connection()).log };
         let level = NGX_LOG_DEBUG as ngx_uint_t;
@@ -174,17 +174,18 @@ impl Request {
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
-    ngx_log_debug_http!(req, "http car_range handler");
+    ngx_log_debug!(req, "http car_range handler");
 
     // Check if range request
-    // let range = req.range();
+    let range = req.range();
 
-    let body = "Not a range request".to_string();
-    // if let Some(range_val) = range {
-    //     format!("Detected range header {}", range_val)
-    // } else {
-    //     "Not a range request".to_string()
-    // };
+    let body = if let Some(range_val) = range {
+        format!("Detected range header {}", range_val)
+    } else {
+        "Not a range request".to_string()
+    };
+
+    ngx_log_debug!(req, "Body {}", body);
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
@@ -194,6 +195,8 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     if status == NGX_ERROR as ngx_int_t || status != NGX_OK as ngx_int_t {
         return status;
     }
+
+    ngx_log_debug!(req, "Status {}", status);
 
     // put the string into the buffer pool so it will be dealocated automatically
     let buf = unsafe {
@@ -205,6 +208,8 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
         (*buf).set_last_in_chain(1);
         buf
     };
+
+    ngx_log_debug!(req, "created buffer");
 
     // Insertion in the buffer chain.
     let mut out = ngx_chain_t {
