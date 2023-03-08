@@ -9,21 +9,20 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-serde_ipld_dagcbor = "0.2.2"
-cid = { version = "0.10.1", features = ["serde-codec"] }
-serde = "1.0.152"
-anyhow = "1.0.69"
-integer-encoding = "3.0.4"
-prost = "0.11"
-num_enum = "0.5.11"
+# serde_ipld_dagcbor = "0.2.2"
+# cid = { version = "0.10.1", features = ["serde-codec"] }
+# serde = "1.0.152"
+# anyhow = "1.0.69"
+# integer-encoding = "3.0.4"
+# prost = "0.11"
+# num_enum = "0.5.11"
 nginx-rs = { version = "0.1.0", path = "./nginx-rs" }
 
 [dev-dependencies]
-hex = "0.4.3"
+# hex = "0.4.3"
 
 [build-dependencies]
 prost-build = "0.11.1"
-bindgen = "0.64"
 
 
 # help debugging
