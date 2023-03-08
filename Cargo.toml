@@ -9,13 +9,13 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-serde_ipld_dagcbor = "0.2.2"
-cid = { version = "0.10.1", features = ["serde-codec"] }
-serde = "1.0.152"
-anyhow = "1.0.69"
-integer-encoding = "3.0.4"
-prost = "0.11"
-num_enum = "0.5.11"
+# serde_ipld_dagcbor = "0.2.2"
+# cid = { version = "0.10.1", features = ["serde-codec"] }
+# serde = "1.0.152"
+# anyhow = "1.0.69"
+# integer-encoding = "3.0.4"
+# prost = "0.11"
+# num_enum = "0.5.11"
 
 [dev-dependencies]
 hex = "0.4.3"
