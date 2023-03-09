@@ -1,5 +1,6 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     prost_build::Config::new()
@@ -36,4 +37,12 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("unable to write nginx bindings.");
+
+    let output = Command::new("git")
+        .args(&["rev-parse", "HEAD"])
+        .output()
+        .expect("unable to print git commit hash");
+    let git_hash =
+        String::from_utf8(output.stdout).expect("unable to parse git stdout as utf8 string");
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
 }

@@ -177,7 +177,7 @@ impl Request {
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
-    ngx_log_debug_http!(req, "http car_range handler");
+    ngx_log_debug_http!(req, "http car_range handler {}", env!("GIT_HASH"));
 
     // Check if range request
     let range = req.range();
