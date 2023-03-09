@@ -20,17 +20,6 @@ mod dag_pb {
 // pub version: u64,
 // }
 
-// Unixfs data type enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DataType {
-    Raw = 0,
-    Directory = 1,
-    File = 2,
-    Metadata = 3,
-    Symlink = 4,
-    HamtShard = 5,
-}
-
 // #[derive(Debug, Clone, PartialEq, Eq)]
 // pub struct Link {
 //     pub cid: Cid,
