@@ -20,7 +20,7 @@ RUN NGINX_DIR=/opt/nginx cargo build -v
 FROM buildpack-deps:bullseye-curl
 
 # put on a base nginx for config / etc.
-RUN apt install nginx
+RUN apt update && install -y nginx
 
 COPY --from=builder /usr/local/nginx /usr/local/nginx
 COPY --from=builder /opt/nginx-car-range/target/debug/libnginx_car_range.so /usr/local/lib/libnginx_car_range.so
