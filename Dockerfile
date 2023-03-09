@@ -27,5 +27,5 @@ COPY --from=builder /opt/nginx-car-range/target/debug/libnginx_car_range.so /usr
 
 COPY fixture.car /var/www/html/fixture.car
 COPY config/nginx.conf /etc/nginx/nginx.conf
-COPY --chmod=700 ci.sh /ci.sh
-
+COPY ci.sh /ci.sh
+RUN chmod u+rwx /ci.sh
