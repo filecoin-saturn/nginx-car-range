@@ -179,7 +179,7 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     // Check if range request
     let range = req.range();
 
-    if let Some(range_val) = range {
+    let body = if let Some(range_val) = range {
         format!("Detected range header {}", range_val)
     } else {
         "Not a range request".to_string()
