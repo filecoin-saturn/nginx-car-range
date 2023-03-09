@@ -150,6 +150,9 @@ impl Request {
     }
 
     fn range(&self) -> Option<&str> {
+        if self.0.headers_in.range.is_null() {
+            return None;
+        }
         unsafe { (*self.0.headers_in.range).value.to_str().ok() }
     }
 
