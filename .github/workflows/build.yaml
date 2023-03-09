@@ -14,4 +14,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag nginx-car-range:$(date +%s)
+      run: docker build . --file Dockerfile --tag nginx-car-range:$(date +%s) -t nginx-car-range:latest
+    - name: Run CI tests
+      run: docker run nginx-car-range:latest /ci.sh
