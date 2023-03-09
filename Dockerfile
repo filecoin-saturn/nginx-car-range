@@ -7,7 +7,7 @@ RUN apt update && apt install -y build-essential unzip llvm-dev libclang-dev cla
 
 # nginx to build against. pinned @ 1.18 as distributed by saturn
 RUN curl -LO https://nginx.org/download/nginx-1.18.0.tar.gz && mkdir /opt/nginx && tar -xf nginx-1.18.0.tar.gz --strip-components=1 -C /opt/nginx && ls /opt/nginx && rm nginx-1.18.0.tar.gz
-RUN cd /opt/nginx && ./configure --with-debug && make && make install && cd /opt/nginx-car-range/
+RUN cd /opt/nginx && ./configure --prefix=/usr/local/nginx --with-debug && make && make install && cd /opt/nginx-car-range/
 
 # protobuf. pinned @ v3.22.1
 RUN curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v22.1/protoc-22.1-linux-x86_64.zip && unzip protoc-22.1-linux-x86_64.zip -d /usr/local && rm protoc-22.1-linux-x86_64.zip
@@ -28,4 +28,4 @@ COPY --from=builder /opt/nginx-car-range/target/debug/libnginx_car_range.so /usr
 COPY fixture.car /var/www/html/fixture.car
 COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY ci.sh /ci.sh
-RUN chmod u+rwx /ci.sh
+RUN chmod u+rwx /ci.sh && ls /usr/local/nginx
