@@ -1,4 +1,5 @@
 mod bindings;
+mod car_reader;
 pub mod module;
 
 use crate::bindings::*;
