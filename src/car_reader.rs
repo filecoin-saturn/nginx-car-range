@@ -21,10 +21,7 @@ mod dag_pb {
 // }
 
 // Unixfs data type enum
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
-)]
-#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
     Raw = 0,
     Directory = 1,
