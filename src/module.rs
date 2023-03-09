@@ -177,14 +177,13 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     ngx_log_debug_http!(req, "http car_range handler");
 
     // Check if range request
-    // let range = req.range();
+    let range = req.range();
 
-    let body = "Not a range request".to_string();
-    // if let Some(range_val) = range {
-    //     format!("Detected range header {}", range_val)
-    // } else {
-    //     "Not a range request".to_string()
-    // };
+    if let Some(range_val) = range {
+        format!("Detected range header {}", range_val)
+    } else {
+        "Not a range request".to_string()
+    };
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
