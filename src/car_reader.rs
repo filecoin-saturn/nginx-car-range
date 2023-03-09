@@ -1,7 +1,7 @@
 // use cid::Cid;
 // use integer_encoding::{VarIntReader, VarIntWriter};
 // use prost::Message;
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 // use std::io::{self, Read, Write};
 // use std::ops::{Bound, RangeBounds};
 
