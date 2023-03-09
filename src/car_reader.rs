@@ -1,7 +1,7 @@
 // use cid::Cid;
 // use integer_encoding::{VarIntReader, VarIntWriter};
 // use prost::Message;
-// use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 // use std::io::{self, Read, Write};
 // use std::ops::{Bound, RangeBounds};
 
@@ -14,11 +14,11 @@ mod dag_pb {
 }
 
 // CAR V1 header, should contain a single root and be CBOR encoded
-// #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
-// struct CarHeader {
-//     pub roots: Vec<Cid>,
-//     pub version: u64,
-// }
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct CarHeader {
+    // pub roots: Vec<Cid>,
+    pub version: u64,
+}
 
 // Unixfs data type enum
 // #[derive(
