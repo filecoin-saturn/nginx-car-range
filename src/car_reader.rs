@@ -14,25 +14,25 @@ mod dag_pb {
 }
 
 // CAR V1 header, should contain a single root and be CBOR encoded
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct CarHeader {
-    // pub roots: Vec<Cid>,
-    pub version: u64,
-}
+// #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+// pub struct CarHeader {
+// pub roots: Vec<Cid>,
+// pub version: u64,
+// }
 
 // Unixfs data type enum
-// #[derive(
-//     Debug, Clone, Copy, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
-// )]
-// #[repr(i32)]
-// pub enum DataType {
-//     Raw = 0,
-//     Directory = 1,
-//     File = 2,
-//     Metadata = 3,
-//     Symlink = 4,
-//     HamtShard = 5,
-// }
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
+)]
+#[repr(i32)]
+pub enum DataType {
+    Raw = 0,
+    Directory = 1,
+    File = 2,
+    Metadata = 3,
+    Symlink = 4,
+    HamtShard = 5,
+}
 
 // #[derive(Debug, Clone, PartialEq, Eq)]
 // pub struct Link {
