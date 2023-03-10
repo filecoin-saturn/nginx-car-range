@@ -74,6 +74,8 @@ impl Request {
 
             let header = unsafe { v.offset(i as isize) as *mut ngx_table_elt_t };
 
+            i += 1;
+
             let h = unsafe {
                 if header.is_null() {
                     continue;
