@@ -1,6 +1,5 @@
 use crate::bindings::*;
 use std::borrow::Cow;
-use std::ffi::CStr;
 use std::ops::Bound;
 
 impl ngx_str_t {
