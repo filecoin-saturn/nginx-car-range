@@ -1,4 +1,6 @@
 use crate::bindings::*;
+use std::borrow::Cow;
+use std::ops::Bound;
 
 impl ngx_str_t {
     /// Yields a `&str` slice if the [`NgxStr`] contains valid UTF-8.
@@ -9,6 +11,25 @@ impl ngx_str_t {
         let bytes = unsafe { std::slice::from_raw_parts(self.data, self.len) };
         std::str::from_utf8(bytes)
     }
+}
+
+fn parse_bound(s: &str) -> Option<Bound<u64>> {
+    if s == "*" {
+        return Some(Bound::Unbounded);
+    }
+
+    s.parse().ok().map(Bound::Included)
+}
+
+fn parse_range(args: &str) -> Option<(Bound<u64>, Bound<u64>)> {
+    let mut it = form_urlencoded::parse(args.as_bytes());
+    while let Some((Cow::Borrowed(key), Cow::Borrowed(val))) = it.next() {
+        if key == "bytes" {
+            let mut iter = val.trim().splitn(2, ":");
+            return Some((parse_bound(iter.next()?)?, parse_bound(iter.next()?)?));
+        }
+    }
+    None
 }
 
 #[repr(transparent)]
@@ -28,8 +49,9 @@ impl Request {
         self.0.connection
     }
 
-    pub fn range(&self) -> Option<&str> {
-        self.0.args.to_str().ok()
+    pub fn range(&self) -> Option<(Bound<u64>, Bound<u64>)> {
+        let args = self.0.args.to_str().ok()?;
+        parse_range(args)
     }
 
     pub fn set_status(&mut self, status: ngx_uint_t) {
@@ -46,5 +68,23 @@ impl Request {
 
     pub fn send_header(&mut self) -> ngx_int_t {
         unsafe { ngx_http_send_header(&mut self.0) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_range() {
+        assert_eq!(
+            parse_range("bytes=0:100").unwrap(),
+            (Bound::Included(0), Bound::Included(100))
+        );
+
+        assert_eq!(
+            parse_range("bytes=1024:*").unwrap(),
+            (Bound::Included(1024), Bound::Unbounded)
+        );
     }
 }

@@ -9,6 +9,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+form_urlencoded = "1.1.0"
 # serde_ipld_dagcbor = {version = "0.2.2", default-features = false }
 # cid = { version = "0.10.1", default-features = false, features = ["serde-codec"] }
 # serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }

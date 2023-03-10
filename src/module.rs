@@ -132,7 +132,7 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let range = req.range();
 
     let body = if let Some(range_val) = range {
-        format!("Detected args {}\n", range_val)
+        format!("Detected range {:?}\n", range_val)
     } else {
         "Not a range request\n".to_string()
     };
