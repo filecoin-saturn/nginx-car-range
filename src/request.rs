@@ -72,7 +72,12 @@ impl Request {
                 i = 0;
             }
 
-            let header = unsafe { v.offset(i as isize) as *mut ngx_table_elt_t };
+            let arr = unsafe {
+                let arr = *(v as *mut ngx_array_t);
+                std::slice::from_raw_parts_mut(arr.elts, arr.nelts)
+            };
+
+            let header = (&mut arr[i] as *mut std::os::raw::c_void) as *mut ngx_table_elt_t;
 
             i += 1;
 
@@ -84,11 +89,11 @@ impl Request {
                 }
             };
 
-            if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
-                if k == "Accept" && v == "application/vnd.ipld.car" {
-                    return true;
-                }
-            }
+            // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
+            //     if k == "Accept" && v == "application/vnd.ipld.car" {
+            //         return true;
+            //     }
+            // }
         }
 
         false
