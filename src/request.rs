@@ -1,5 +1,6 @@
 use crate::bindings::*;
 use std::borrow::Cow;
+use std::ffi::CStr;
 use std::ops::Bound;
 
 impl ngx_str_t {
@@ -52,6 +53,34 @@ impl Request {
     pub fn range(&self) -> Option<(Bound<u64>, Bound<u64>)> {
         let args = self.0.args.to_str().ok()?;
         parse_range(args)
+    }
+
+    pub fn accept_car(&self) -> bool {
+        let headers = self.0.headers_in.headers;
+
+        let mut part = headers.part;
+        let mut v = part.elts;
+        let mut i = 0;
+
+        loop {
+            if i >= part.nelts {
+                if part.next.is_null() {
+                    break;
+                }
+
+                part = unsafe { *part.next };
+                v = part.elts;
+                i = 0;
+            }
+
+            let header = unsafe { v.offset(i as isize) as *mut ngx_table_elt_t };
+
+            if let Ok(key) = unsafe { (*header).key.to_str() } && key == "Accept" {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn set_status(&mut self, status: ngx_uint_t) {
