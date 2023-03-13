@@ -87,6 +87,8 @@ impl Request {
 
             let header = ptr as *mut ngx_table_elt_t;
 
+            let key = unsafe { (*header).key };
+
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
             //     if k == "Accept" {
             //         return true;
