@@ -73,8 +73,8 @@ impl Request {
             }
 
             let arr = unsafe {
-                let arr = *(v as *mut ngx_array_t);
-                std::slice::from_raw_parts_mut(arr.elts, arr.nelts)
+                // let arr = *(v as *mut ngx_array_t);
+                std::slice::from_raw_parts_mut(v, part.nelts)
             };
 
             let ptr = &mut arr[i] as *mut std::os::raw::c_void;
