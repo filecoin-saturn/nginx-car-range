@@ -89,6 +89,10 @@ impl Request {
 
             let key = unsafe { (*header).key };
 
+            if key.len == 0 {
+                continue;
+            }
+
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
             //     if k == "Accept" {
             //         return true;
