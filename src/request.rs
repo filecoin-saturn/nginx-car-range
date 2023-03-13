@@ -77,6 +77,8 @@ impl Request {
                 std::slice::from_raw_parts_mut(arr.elts, arr.nelts)
             };
 
+            let ptr = &mut arr[i] as *mut std::os::raw::c_void;
+
             // let header = (&mut arr[i] as *mut std::os::raw::c_void) as *mut ngx_table_elt_t;
 
             i += 1;
