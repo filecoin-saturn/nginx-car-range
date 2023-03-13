@@ -83,13 +83,13 @@ impl Request {
 
             i += 1;
 
-            // let h = unsafe {
-            //     if header.is_null() {
-            //         continue;
-            //     } else {
-            //         *header
-            //     }
-            // };
+            let h = unsafe {
+                if header.is_null() {
+                    continue;
+                } else {
+                    *header
+                }
+            };
 
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
             //     if k == "Accept" && v == "application/vnd.ipld.car" {
