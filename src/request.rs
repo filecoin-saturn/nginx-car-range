@@ -79,23 +79,27 @@ impl Request {
 
             let ptr = &mut arr[i] as *mut std::os::raw::c_void;
 
-            let header = ptr as *mut ngx_table_elt_t;
-
             i += 1;
 
-            let h = unsafe {
-                if header.is_null() {
-                    continue;
-                } else {
-                    *header
-                }
-            };
-
-            if let Some(k) = h.key.to_str().ok() {
-                if k == "Accept" {
-                    return true;
-                }
+            if ptr.is_null() {
+                continue;
             }
+
+            let header = ptr as *mut ngx_table_elt_t;
+
+            // let h = unsafe {
+            //     if header.is_null() {
+            //         continue;
+            //     } else {
+            //         *header
+            //     }
+            // };
+
+            // if let Some(k) = h.key.to_str().ok() {
+            //     if k == "Accept" {
+            //         return true;
+            //     }
+            // }
 
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
             //     if k == "Accept" && v == "application/vnd.ipld.car" {
