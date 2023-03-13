@@ -79,7 +79,7 @@ impl Request {
 
             let ptr = &mut arr[i] as *mut std::os::raw::c_void;
 
-            // let header = (&mut arr[i] as *mut std::os::raw::c_void) as *mut ngx_table_elt_t;
+            let header = ptr as *mut ngx_table_elt_t;
 
             i += 1;
 
