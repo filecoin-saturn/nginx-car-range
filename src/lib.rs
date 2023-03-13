@@ -3,6 +3,7 @@ mod pool;
 // mod car_reader;
 pub mod module;
 mod request;
+mod varint;
 
 use crate::bindings::*;
 use crate::module::ngx_car_range_module;
