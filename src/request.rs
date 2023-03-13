@@ -91,6 +91,12 @@ impl Request {
                 }
             };
 
+            if let Some(k) = h.key.to_str().ok() {
+                if k == "Accept" {
+                    return true;
+                }
+            }
+
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
             //     if k == "Accept" && v == "application/vnd.ipld.car" {
             //         return true;
