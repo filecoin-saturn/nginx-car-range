@@ -94,7 +94,9 @@ impl Request {
             }
 
             if let Ok(k) = key.to_str() {
-                return true;
+                if k == "Accept" {
+                    return true;
+                }
             }
 
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
