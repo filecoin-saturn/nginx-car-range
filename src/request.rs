@@ -94,7 +94,9 @@ impl Request {
             }
 
             if let Ok(k) = key.to_str() {
-                return k.to_string();
+                if i == 1 {
+                    return k.to_string();
+                }
             }
 
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
