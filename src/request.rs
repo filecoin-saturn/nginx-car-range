@@ -85,19 +85,19 @@ impl Request {
                 continue;
             }
 
-            let header = ptr as *mut ngx_table_elt_t;
+            // let header = ptr as *mut ngx_table_elt_t;
 
-            let key = unsafe { (*header).key };
+            // let key = unsafe { (*header).key };
 
-            if key.len == 0 {
-                continue;
-            }
+            // if key.len == 0 {
+            //     continue;
+            // }
 
-            if let Ok(k) = key.to_str() {
-                if i == 1 {
-                    return k.to_string();
-                }
-            }
+            // if let Ok(k) = key.to_str() {
+            //     if i == 1 {
+            //         return k.to_string();
+            //     }
+            // }
 
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
             //     if k == "Accept" {
