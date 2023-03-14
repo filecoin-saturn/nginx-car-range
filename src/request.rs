@@ -85,13 +85,13 @@ impl Request {
                 continue;
             }
 
-            // let header = ptr as *mut ngx_table_elt_t;
+            let header = ptr as *mut ngx_table_elt_t;
 
-            // let key = unsafe { (*header).key };
+            let key = unsafe { (*header).key };
 
-            // if key.len == 0 {
-            //     continue;
-            // }
+            if key.len == 0 {
+                continue;
+            }
 
             // if let Ok(k) = key.to_str() {
             //     if i == 1 {
