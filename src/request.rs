@@ -89,7 +89,7 @@ impl Request {
 
             let key = unsafe { (*header).key };
 
-            if key.len == 0 {
+            if key.len == 0 || key.data.is_null() {
                 continue;
             }
 
