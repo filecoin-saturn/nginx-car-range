@@ -130,7 +130,7 @@ impl Request {
             // must be UTF-8 characters so we can skip the expensive validation check.
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.contains("Accept") {
+            if k.contains("Host") {
                 return true;
             }
 
