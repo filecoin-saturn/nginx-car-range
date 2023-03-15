@@ -115,13 +115,13 @@ unsafe fn ngx_http_conf_get_module_loc_conf(
 
 #[no_mangle]
 unsafe extern "C" fn ngx_car_range(
-    cf: *mut ngx_conf_t,
+    _cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
     _conf: *mut c_void,
 ) -> *mut c_char {
-    let clcf = ngx_http_conf_get_module_loc_conf(cf, &ngx_http_core_module)
-        as *mut ngx_http_core_loc_conf_t;
-    (*clcf).handler = Some(ngx_car_range_handler);
+    // let clcf = ngx_http_conf_get_module_loc_conf(cf, &ngx_http_core_module)
+    //     as *mut ngx_http_core_loc_conf_t;
+    // (*clcf).handler = Some(ngx_car_range_handler);
 
     ptr::null_mut()
 }
