@@ -122,24 +122,25 @@ unsafe extern "C" fn ngx_car_range(
     ptr::null_mut()
 }
 
+const BAIL: ngx_int_t = NGX_DECLINED as ngx_int_t;
+
 #[no_mangle]
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
     ngx_log_debug_http!(req, "http car_range handler {}", env!("GIT_HASH"));
 
-    // Check if range request
-    let range = req.range();
+    if !req.accept_car() {
+        return BAIL;
+    }
 
-    let mut body = if let Some(range_val) = range {
-        format!("Detected range {:?}\n", range_val)
-    } else {
-        "Not a range request\n".to_string()
+    // Check if range request
+    let range = match req.range() {
+        Some(range_val) => range_val,
+        None => return BAIL,
     };
 
-    if req.accept_car() {
-        body = format!("Accept header\n{}", body);
-    }
+    let body = format!("Range {:?}\n", range);
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
