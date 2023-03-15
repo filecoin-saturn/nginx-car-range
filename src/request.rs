@@ -84,9 +84,6 @@ impl Request {
                 part = unsafe { *part.next };
                 v = part.elts;
                 i = 0;
-
-                // checking if we even get there
-                return true;
             }
 
             let arr = unsafe {
@@ -102,6 +99,17 @@ impl Request {
                 continue;
             }
 
+            if i == 2 {
+                continue;
+            }
+
+            // struct ngx_table_elt_s {
+            //     hash: ngx_uint_t,
+            //     key: ngx_str_t,
+            //     value: ngx_str_t,
+            //     lowcase_key: *mut u_char,
+            //     next: *mut ngx_table_elt_t,
+            // }
             let header = ptr as *mut ngx_table_elt_t;
             let key = unsafe { (*header).key };
             if key.len == 0 || key.data.is_null() {
@@ -115,7 +123,7 @@ impl Request {
 
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.is_empty() {
+            if k.contains("Accept") {
                 return true;
             }
 
