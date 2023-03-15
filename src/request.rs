@@ -73,61 +73,51 @@ impl Request {
         let headers = self.0.headers_in.headers;
 
         // we iterate over the array and then go to the next one in the list
-        // let part = headers.part;
-        // let mut v = part.elts;
+        let mut part = headers.part;
         let mut i = 0;
 
         // There should at least be a few headers but just to be safe...
-        if headers.part.elts.is_null() {
+        if part.elts.is_null() {
             return false;
         }
 
+        // Each HTTP header in the array is shaped as:
+        // struct ngx_table_elt_s {
+        //     hash: ngx_uint_t,
+        //     key: ngx_str_t,
+        //     value: ngx_str_t,
+        //     lowcase_key: *mut u_char,
+        //     next: *mut ngx_table_elt_t,
+        // }
         // Create a slice over the first array in the list
-        let arr: &[ngx_table_elt_t] = unsafe {
-            std::slice::from_raw_parts(
-                headers.part.elts as *const ngx_table_elt_t,
-                headers.part.nelts,
-            )
-        };
+        let mut arr: &[ngx_table_elt_t] =
+            unsafe { std::slice::from_raw_parts(part.elts as *const ngx_table_elt_t, part.nelts) };
 
         loop {
             // only iterate first array for now
             if i >= arr.len() {
-                break;
-                // if part.next.is_null() {
-                //     break;
-                // }
-                // part = unsafe { *part.next };
-                // v = part.elts;
-                // i = 0;
+                if part.next.is_null() {
+                    break;
+                }
+                part = unsafe { *part.next };
+                arr = unsafe {
+                    std::slice::from_raw_parts(part.elts as *const ngx_table_elt_t, part.nelts)
+                };
+                i = 0;
             }
 
-            // cast to a pointer so we can cast it to an ngx object in the next step
-            // let ptr = &arr[i] as *const std::os::raw::c_void;
             let table = arr[i];
 
             // increment the index for the next iteration
             i += 1;
 
-            // Each HTTP header in the array is shaped as:
-            // struct ngx_table_elt_s {
-            //     hash: ngx_uint_t,
-            //     key: ngx_str_t,
-            //     value: ngx_str_t,
-            //     lowcase_key: *mut u_char,
-            //     next: *mut ngx_table_elt_t,
-            // }
-            // let table = ptr as *const ngx_table_elt_t;
-            // we can safely deref the table object because we had a valid copy in the array
-            let key = table.key;
-
-            // the key is a nginx string object
+            // the key and values are nginx string objects
             // struct ngx_str_t {
             //      len: usize,
             //      data: *mut u_char,
             // }
             // create a byte slice from the nginx string object
-            let bytes = unsafe { std::slice::from_raw_parts(key.data, key.len) };
+            let bytes = unsafe { std::slice::from_raw_parts(table.key.data, table.key.len) };
             if bytes.is_empty() {
                 continue;
             }
@@ -136,14 +126,21 @@ impl Request {
             // must be UTF-8 characters so we can skip the expensive validation check.
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.contains("Accept") {
-                return true;
+            if !k.contains("Accept") {
+                continue;
             }
 
+            let bytes = unsafe { std::slice::from_raw_parts(table.value.data, table.value.len) };
+            if bytes.is_empty() {
+                continue;
+            }
+
+            let v = unsafe { std::str::from_utf8_unchecked(bytes) };
+
             // Check that the Accept header is in CAR format
-            //     if k == "Accept" && v == "application/vnd.ipld.car" {
-            //         return true;
-            //     }
+            if v == "application/vnd.ipld.car" {
+                return true;
+            }
         }
 
         false
