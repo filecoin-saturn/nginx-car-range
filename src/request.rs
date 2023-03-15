@@ -76,6 +76,10 @@ impl Request {
         // let mut v = part.elts;
         let mut i = 0;
 
+        if headers.part.elts.is_null() {
+            return false;
+        }
+
         let arr = unsafe {
             // let arr = *(v as *mut ngx_array_t);
             std::slice::from_raw_parts_mut(headers.part.elts, headers.part.nelts)
@@ -118,10 +122,12 @@ impl Request {
                 continue;
             }
 
-            let k = unsafe { std::str::from_utf8_unchecked(bytes) };
+            let vec = bytes.to_vec();
 
-            if k.contains("Accept") {
-                return true;
+            let k = unsafe { std::str::from_utf8_unchecked(&vec[..]) };
+
+            if k.is_empty() {
+                continue;
             }
 
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
