@@ -70,62 +70,61 @@ impl Request {
         //     next: *mut ngx_list_part_t,
         // }
 
-        let mut headers = self.0.headers_in.headers;
+        let headers = self.0.headers_in.headers;
 
-        let mut part = &mut headers.part as *mut ngx_list_part_t;
+        let mut part = headers.part;
+        let mut v = part.elts;
+        let mut i = 0;
 
-        unsafe {
-            let mut v = (*part).elts;
-            let mut i = 0;
-
-            loop {
-                if i >= (*part).nelts {
-                    if (*part).next.is_null() {
-                        break;
-                    }
-
-                    part = (*part).next;
-                    v = (*part).elts;
-                    i = 0;
+        loop {
+            if i >= part.nelts {
+                if part.next.is_null() {
+                    break;
                 }
+                part = unsafe { *part.next };
+                v = part.elts;
+                i = 0;
 
-                let arr = std::slice::from_raw_parts_mut(v, (*part).nelts);
-
-                let ptr = &mut arr[i] as *mut std::os::raw::c_void;
-
-                i += 1;
-
-                if ptr.is_null() {
-                    continue;
-                }
-
-                let header = ptr as *mut ngx_table_elt_t;
-
-                let key = (*header).key;
-
-                if key.len == 0 || key.data.is_null() {
-                    continue;
-                }
-
-                let bytes = std::slice::from_raw_parts_mut(key.data, key.len);
-
-                if bytes.is_empty() {
-                    continue;
-                }
-
-                let k = std::str::from_utf8_unchecked(bytes);
-
-                if k.contains("Accept") {
-                    return true;
-                }
-
-                // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
-                //     if k == "Accept" && v == "application/vnd.ipld.car" {
-                //         return true;
-                //     }
-                // }
+                // checking if we even get there
+                return true;
             }
-        };
+
+            let arr = unsafe {
+                // let arr = *(v as *mut ngx_array_t);
+                std::slice::from_raw_parts_mut(v, part.nelts)
+            };
+
+            let ptr = &mut arr[i] as *mut std::os::raw::c_void;
+
+            i += 1;
+
+            if ptr.is_null() {
+                continue;
+            }
+
+            let header = ptr as *mut ngx_table_elt_t;
+            let key = unsafe { (*header).key };
+            if key.len == 0 || key.data.is_null() {
+                continue;
+            }
+
+            let bytes = unsafe { std::slice::from_raw_parts_mut(key.data, key.len) };
+            if bytes.is_empty() {
+                continue;
+            }
+
+            let k = unsafe { std::str::from_utf8_unchecked(bytes) };
+
+            if k.is_empty() {
+                return true;
+            }
+
+            // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
+            //     if k == "Accept" && v == "application/vnd.ipld.car" {
+            //         return true;
+            //     }
+            // }
+        }
 
         false
     }
