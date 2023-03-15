@@ -99,9 +99,7 @@ impl Request {
                 continue;
             }
 
-            if !bytes.is_ascii() {
-                return true;
-            }
+            let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
             // if k == "Accept" {
             //     return true;
