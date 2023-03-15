@@ -54,7 +54,7 @@ impl Request {
         parse_range(args)
     }
 
-    pub fn accept_car(&self) -> String {
+    pub fn accept_car(&self) -> bool {
         let headers = self.0.headers_in.headers;
 
         let mut part = headers.part;
@@ -99,6 +99,11 @@ impl Request {
                 continue;
             }
 
+            let k = String::from_utf8_lossy(bytes);
+            if k == "Accept" {
+                return true;
+            }
+
             // if let Ok(k) = key.to_str() {
             //     if i == 1 {
             //         return k.to_string();
@@ -118,7 +123,7 @@ impl Request {
             // }
         }
 
-        "".to_string()
+        false
     }
 
     pub fn set_status(&mut self, status: ngx_uint_t) {
