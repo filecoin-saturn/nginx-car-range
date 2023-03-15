@@ -8,51 +8,8 @@ impl ngx_str_t {
         // SAFETY: The caller has provided a valid `ngx_str_t` with a `data` pointer that points
         // to range of bytes of at least `len` bytes, whose content remains valid and doesn't
         // change for the lifetime of the returned `NgxStr`.
-        let bytes = unsafe { std::slice::from_raw_parts(self.data, self.len) };
+        let bytes = unsafe { std::slice::from_raw_parts_mut(self.data, self.len) };
         std::str::from_utf8(bytes)
-    }
-}
-
-pub struct NgxStr([u_char]);
-
-impl NgxStr {
-    /// Create an [`NgxStr`] from an [`ngx_str_t`].
-    ///
-    /// [`ngx_str_t`]: https://nginx.org/en/docs/dev/development_guide.html#string_overview
-    pub unsafe fn from_ngx_str<'a>(str: ngx_str_t) -> &'a NgxStr {
-        // SAFETY: The caller has provided a valid `ngx_str_t` with a `data` pointer that points
-        // to range of bytes of at least `len` bytes, whose content remains valid and doesn't
-        // change for the lifetime of the returned `NgxStr`.
-        std::slice::from_raw_parts(str.data, str.len).into()
-    }
-
-    /// Access the [`NgxStr`] as a byte slice.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Yields a `&str` slice if the [`NgxStr`] contains valid UTF-8.
-    pub fn to_str(&self) -> Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(self.as_bytes())
-    }
-
-    /// Converts an [`NgxStr`] into a [`Cow<str>`], replacing invalid UTF-8 sequences.
-    ///
-    /// See [`String::from_utf8_lossy`].
-    pub fn to_string_lossy(&self) -> Cow<str> {
-        String::from_utf8_lossy(self.as_bytes())
-    }
-
-    /// Returns `true` if the [`NgxStr`] is empty, otherwise `false`.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl From<&[u8]> for &NgxStr {
-    fn from(bytes: &[u8]) -> Self {
-        // SAFETY: An `NgxStr` is identical to a `[u8]` slice, given `u_char` is an alias for `u8`.
-        unsafe { &*(bytes as *const [u8] as *const NgxStr) }
     }
 }
 
@@ -136,13 +93,17 @@ impl Request {
                 continue;
             }
 
-            let keystr = unsafe { NgxStr::from_ngx_str(key) };
+            let bytes = unsafe { std::slice::from_raw_parts_mut(key.data, key.len) };
 
-            if let Ok(k) = keystr.to_str() {
-                //     if i == 1 {
-                //         return k.to_string();
-                //     }
+            if bytes.is_empty() {
+                continue;
             }
+
+            // if let Ok(k) = key.to_str() {
+            //     if i == 1 {
+            //         return k.to_string();
+            //     }
+            // }
 
             // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
             //     if k == "Accept" {
