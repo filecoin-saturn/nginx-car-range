@@ -99,7 +99,6 @@ impl Request {
                 continue;
             }
 
-            let k = String::from_utf8_lossy(bytes);
             // if k == "Accept" {
             //     return true;
             // }
