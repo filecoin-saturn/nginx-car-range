@@ -99,6 +99,10 @@ impl Request {
                 continue;
             }
 
+            if !bytes.is_ascii() {
+                return true;
+            }
+
             // if k == "Accept" {
             //     return true;
             // }
