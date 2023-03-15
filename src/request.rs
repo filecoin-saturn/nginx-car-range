@@ -8,7 +8,7 @@ impl ngx_str_t {
         // SAFETY: The caller has provided a valid `ngx_str_t` with a `data` pointer that points
         // to range of bytes of at least `len` bytes, whose content remains valid and doesn't
         // change for the lifetime of the returned `NgxStr`.
-        let bytes = unsafe { std::slice::from_raw_parts(self.data, self.len) };
+        let bytes = unsafe { std::slice::from_raw_parts_mut(self.data, self.len) };
         std::str::from_utf8(bytes)
     }
 }
@@ -52,6 +52,79 @@ impl Request {
     pub fn range(&self) -> Option<(Bound<u64>, Bound<u64>)> {
         let args = self.0.args.to_str().ok()?;
         parse_range(args)
+    }
+
+    pub fn accept_car(&self) -> String {
+        let headers = self.0.headers_in.headers;
+
+        let mut part = headers.part;
+        let mut v = part.elts;
+        let mut i = 0;
+
+        loop {
+            if i >= part.nelts {
+                if part.next.is_null() {
+                    break;
+                }
+
+                part = unsafe { *part.next };
+                v = part.elts;
+                i = 0;
+            }
+
+            let arr = unsafe {
+                // let arr = *(v as *mut ngx_array_t);
+                std::slice::from_raw_parts_mut(v, part.nelts)
+            };
+
+            let ptr = &mut arr[i] as *mut std::os::raw::c_void;
+
+            i += 1;
+
+            if ptr.is_null() {
+                continue;
+            }
+
+            let header = ptr as *mut ngx_table_elt_t;
+
+            let key = unsafe { (*header).key };
+
+            if key.len == 0 || key.data.is_null() {
+                continue;
+            }
+
+            let bytes = unsafe { std::slice::from_raw_parts_mut(key.data, key.len) };
+
+            if bytes.is_empty() {
+                continue;
+            }
+
+            let k = unsafe { std::str::from_utf8_unchecked(bytes) };
+
+            if i == 2 {
+                return k.to_string();
+            }
+
+            // if let Ok(k) = key.to_str() {
+            //     if i == 1 {
+            //         return k.to_string();
+            //     }
+            // }
+
+            // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
+            //     if k == "Accept" {
+            //         return true;
+            //     }
+            // }
+
+            // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
+            //     if k == "Accept" && v == "application/vnd.ipld.car" {
+            //         return true;
+            //     }
+            // }
+        }
+
+        "".to_string()
     }
 
     pub fn set_status(&mut self, status: ngx_uint_t) {

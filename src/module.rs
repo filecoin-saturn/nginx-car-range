@@ -131,11 +131,16 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
     // Check if range request
     let range = req.range();
 
-    let body = if let Some(range_val) = range {
+    let mut body = if let Some(range_val) = range {
         format!("Detected range {:?}\n", range_val)
     } else {
         "Not a range request\n".to_string()
     };
+
+    let header = req.accept_car();
+    if !header.is_empty() {
+        body = format!("Accept header {}\n{}", header, body);
+    }
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
     req.set_content_length(body.len());
