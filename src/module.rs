@@ -31,7 +31,7 @@ macro_rules! ngx_log_debug_http {
     }
 }
 
-static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
+pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
 
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
@@ -148,9 +148,9 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
         };
     }
 
-    if !req.accept_car() {
-        bail!();
-    }
+    // if !req.accept_car() {
+    //     bail!();
+    // }
     // Check if range request
     // let range = match req.range() {
     //     Some(range_val) => range_val,
