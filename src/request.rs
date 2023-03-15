@@ -124,9 +124,9 @@ impl Request {
 
             let vec = bytes.to_vec();
 
-            let k = unsafe { std::str::from_utf8_unchecked(&vec[..]) };
+            // let k = unsafe { std::str::from_utf8_unchecked(&vec[..]) };
 
-            if k.is_empty() {
+            if vec.is_empty() {
                 continue;
             }
 
