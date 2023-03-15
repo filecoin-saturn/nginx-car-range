@@ -38,8 +38,8 @@ static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("car_range"), /* directive */
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t, /* location context and takes no arguments*/
-        set: None, /* configuration setup function */
-        conf: 0,   /* No offset. Only one context is supported. */
+        set: Some(ngx_conf_set_flag_slot), /* configuration setup function */
+        conf: 0,                           /* No offset. Only one context is supported. */
         offset: 0, /* No offset when storing the module configuration on struct. */
         post: ptr::null_mut(),
     },
@@ -162,11 +162,10 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
 }
 
 // Prepend to filter chain
-extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
-    unsafe {
-        ngx_http_next_header_filter = ngx_http_top_header_filter;
-        ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
-    }
+#[no_mangle]
+unsafe extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
 
     return NGX_OK as ngx_int_t;
 }
