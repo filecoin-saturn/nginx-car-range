@@ -99,10 +99,14 @@ impl Request {
                 continue;
             }
 
-            let k = String::from_utf8_lossy(bytes);
-            if k == "Accept" {
+            if std::ffi::CStr::from_bytes_with_nul(bytes).is_ok() {
                 return true;
             }
+
+            // let k = String::from_utf8_lossy(bytes);
+            // if k == "Accept" {
+            //     return true;
+            // }
 
             // if let Ok(k) = key.to_str() {
             //     if i == 1 {
