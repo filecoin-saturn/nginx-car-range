@@ -165,8 +165,8 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
 // Prepend to filter chain
 #[no_mangle]
 unsafe extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
-    ngx_http_next_header_filter = ngx_http_top_header_filter;
-    ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
+    // ngx_http_next_header_filter = ngx_http_top_header_filter;
+    // ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
 
     return NGX_OK as ngx_int_t;
 }
