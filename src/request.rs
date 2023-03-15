@@ -101,8 +101,10 @@ impl Request {
 
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.is_empty() {
-                return true;
+            for c in k.chars() {
+                if c == 'A' {
+                    return true;
+                }
             }
 
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
