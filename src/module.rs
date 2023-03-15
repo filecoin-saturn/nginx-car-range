@@ -39,9 +39,9 @@ static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("car_range"), /* directive */
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t, /* location context and takes no arguments*/
-        set: None, /* configuration setup function */
-        conf: 0,   /* No offset. Only one context is supported. */
-        offset: 0, /* No offset when storing the module configuration on struct. */
+        set: Some(ngx_car_range), /* configuration setup function */
+        conf: 0,                  /* No offset. Only one context is supported. */
+        offset: 0,                /* No offset when storing the module configuration on struct. */
         post: ptr::null_mut(),
     },
     /* command termination */
