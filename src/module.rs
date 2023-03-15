@@ -31,6 +31,7 @@ macro_rules! ngx_log_debug_http {
     }
 }
 
+#[no_mangle]
 pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
 
 #[no_mangle]
