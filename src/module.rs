@@ -137,8 +137,9 @@ extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
         "Not a range request\n".to_string()
     };
 
-    if req.accept_car() {
-        body = format!("Accept header\n{}", body);
+    let header = req.accept_car();
+    if !header.is_empty() {
+        body = format!("Accept header {}\n{}", header, body);
     }
 
     req.set_status(NGX_HTTP_OK as ngx_uint_t);
