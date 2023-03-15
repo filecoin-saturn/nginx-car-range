@@ -72,34 +72,31 @@ impl Request {
 
         let headers = self.0.headers_in.headers;
 
-        let mut part = headers.part;
-        let mut v = part.elts;
+        // let part = headers.part;
+        // let mut v = part.elts;
         let mut i = 0;
 
-        loop {
-            if i >= part.nelts {
-                if part.next.is_null() {
-                    break;
-                }
-                part = unsafe { *part.next };
-                v = part.elts;
-                i = 0;
-            }
+        let arr = unsafe {
+            // let arr = *(v as *mut ngx_array_t);
+            std::slice::from_raw_parts_mut(headers.part.elts, headers.part.nelts)
+        };
 
-            let arr = unsafe {
-                // let arr = *(v as *mut ngx_array_t);
-                std::slice::from_raw_parts_mut(v, part.nelts)
-            };
+        loop {
+            if i >= headers.part.nelts {
+                break;
+                // if part.next.is_null() {
+                //     break;
+                // }
+                // part = unsafe { *part.next };
+                // v = part.elts;
+                // i = 0;
+            }
 
             let ptr = &mut arr[i] as *mut std::os::raw::c_void;
 
             i += 1;
 
             if ptr.is_null() {
-                continue;
-            }
-
-            if i == 2 {
                 continue;
             }
 
