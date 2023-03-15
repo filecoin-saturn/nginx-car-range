@@ -83,7 +83,12 @@ impl Request {
         }
 
         // Create a slice over the first array in the list
-        let arr = unsafe { std::slice::from_raw_parts(headers.part.elts, headers.part.nelts) };
+        let arr: &[ngx_table_elt_t] = unsafe {
+            std::slice::from_raw_parts(
+                headers.part.elts as *const ngx_table_elt_t,
+                headers.part.nelts,
+            )
+        };
 
         loop {
             // only iterate first array for now
@@ -98,7 +103,8 @@ impl Request {
             }
 
             // cast to a pointer so we can cast it to an ngx object in the next step
-            let ptr = &arr[i] as *const std::os::raw::c_void;
+            // let ptr = &arr[i] as *const std::os::raw::c_void;
+            let table = arr[i];
 
             // increment the index for the next iteration
             i += 1;
@@ -111,9 +117,9 @@ impl Request {
             //     lowcase_key: *mut u_char,
             //     next: *mut ngx_table_elt_t,
             // }
-            let table = ptr as *const ngx_table_elt_t;
+            // let table = ptr as *const ngx_table_elt_t;
             // we can safely deref the table object because we had a valid copy in the array
-            let key = unsafe { (*table).key };
+            let key = table.key;
 
             // the key is a nginx string object
             // struct ngx_str_t {
@@ -130,7 +136,7 @@ impl Request {
             // must be UTF-8 characters so we can skip the expensive validation check.
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.contains("Host") {
+            if k.contains("Accept") {
                 return true;
             }
 
