@@ -1,5 +1,6 @@
 use crate::bindings::*;
 use crate::request::*;
+use std::ops::Bound;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -30,14 +31,18 @@ macro_rules! ngx_log_debug_http {
     }
 }
 
+extern "C" {
+    pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt;
+}
+
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("car_range"), /* directive */
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t, /* location context and takes no arguments*/
-        set: Some(ngx_car_range), /* configuration setup function */
-        conf: 0,                  /* No offset. Only one context is supported. */
-        offset: 0,                /* No offset when storing the module configuration on struct. */
+        set: None, /* configuration setup function */
+        conf: 0,   /* No offset. Only one context is supported. */
+        offset: 0, /* No offset when storing the module configuration on struct. */
         post: ptr::null_mut(),
     },
     /* command termination */
@@ -57,7 +62,7 @@ static mut ngx_car_range_commands: [ngx_command_t; 2] = [
 #[no_mangle]
 static ngx_car_range_module_ctx: ngx_http_module_t = ngx_http_module_t {
     preconfiguration: None,
-    postconfiguration: None,
+    postconfiguration: Some(ngx_car_range_filter_init),
 
     create_main_conf: None,
     init_main_conf: None,
@@ -122,7 +127,45 @@ unsafe extern "C" fn ngx_car_range(
     ptr::null_mut()
 }
 
+struct CarRangeCtx {
+    range: (Bound<u64>, Bound<u64>),
+}
+
 const BAIL: ngx_int_t = NGX_DECLINED as ngx_int_t;
+
+#[no_mangle]
+extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int_t {
+    let req = unsafe { &mut Request::from_ngx_http_request(r) };
+
+    ngx_log_debug_http!(req, "http car_range header filter {}", env!("GIT_HASH"));
+
+    if !req.accept_car() {
+        return BAIL;
+    }
+    // Check if range request
+    // let range = match req.range() {
+    //     Some(range_val) => range_val,
+    //     None => return BAIL,
+    // };
+
+    // let pool = req.pool();
+
+    unsafe {
+        ngx_http_next_header_filter
+            .map(|cb| cb(r))
+            .unwrap_or(NGX_ERROR as ngx_int_t)
+    }
+}
+
+// Prepend to filter chain
+extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
+    unsafe {
+        ngx_http_next_header_filter = ngx_http_top_header_filter;
+        ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
+    }
+
+    return NGX_OK as ngx_int_t;
+}
 
 #[no_mangle]
 extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {

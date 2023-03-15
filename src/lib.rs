@@ -1,4 +1,5 @@
 mod bindings;
+mod pool;
 // mod car_reader;
 pub mod module;
 mod request;
