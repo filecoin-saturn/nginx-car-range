@@ -72,6 +72,7 @@ impl Request {
         // }
         let headers = self.0.headers_in.headers;
 
+        // we iterate over the array and then go to the next one in the list
         // let part = headers.part;
         // let mut v = part.elts;
         let mut i = 0;
@@ -82,7 +83,7 @@ impl Request {
         }
 
         // Create a slice over the first array in the list
-        let arr = unsafe { std::slice::from_raw_parts_mut(headers.part.elts, headers.part.nelts) };
+        let arr = unsafe { std::slice::from_raw_parts(headers.part.elts, headers.part.nelts) };
 
         loop {
             // only iterate first array for now
@@ -96,13 +97,11 @@ impl Request {
                 // i = 0;
             }
 
-            let ptr = &mut arr[i] as *mut std::os::raw::c_void;
+            // cast to a pointer so we can cast it to an ngx object in the next step
+            let ptr = &arr[i] as *const std::os::raw::c_void;
 
+            // increment the index for the next iteration
             i += 1;
-
-            if ptr.is_null() {
-                continue;
-            }
 
             // Each HTTP header in the array is shaped as:
             // struct ngx_table_elt_s {
@@ -112,15 +111,17 @@ impl Request {
             //     lowcase_key: *mut u_char,
             //     next: *mut ngx_table_elt_t,
             // }
-            let header = ptr as *mut ngx_table_elt_t;
-            let key = unsafe { (*header).key };
-            // The key should not be empty but just in case
-            if key.len == 0 || key.data.is_null() {
-                continue;
-            }
+            let table = ptr as *const ngx_table_elt_t;
+            // we can safely deref the table object because we had a valid copy in the array
+            let key = unsafe { (*table).key };
 
+            // the key is a nginx string object
+            // struct ngx_str_t {
+            //      len: usize,
+            //      data: *mut u_char,
+            // }
             // create a byte slice from the nginx string object
-            let bytes = unsafe { std::slice::from_raw_parts_mut(key.data, key.len) };
+            let bytes = unsafe { std::slice::from_raw_parts(key.data, key.len) };
             if bytes.is_empty() {
                 continue;
             }
@@ -129,7 +130,7 @@ impl Request {
             // must be UTF-8 characters so we can skip the expensive validation check.
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.contains("Host") {
+            if k.contains("Accept") {
                 return true;
             }
 
