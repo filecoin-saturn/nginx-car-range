@@ -31,9 +31,7 @@ macro_rules! ngx_log_debug_http {
     }
 }
 
-extern "C" {
-    pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt;
-}
+static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
 
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
@@ -139,8 +137,19 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
 
     ngx_log_debug_http!(req, "http car_range header filter {}", env!("GIT_HASH"));
 
+    // call the next filter in the chain when we exit
+    macro_rules! bail {
+        () => {
+            return unsafe {
+                ngx_http_next_header_filter
+                    .map(|cb| cb(r))
+                    .unwrap_or(NGX_ERROR as ngx_int_t)
+            }
+        };
+    }
+
     if !req.accept_car() {
-        return BAIL;
+        bail!();
     }
     // Check if range request
     // let range = match req.range() {
@@ -149,12 +158,7 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
     // };
 
     // let pool = req.pool();
-
-    unsafe {
-        ngx_http_next_header_filter
-            .map(|cb| cb(r))
-            .unwrap_or(NGX_ERROR as ngx_int_t)
-    }
+    bail!()
 }
 
 // Prepend to filter chain
