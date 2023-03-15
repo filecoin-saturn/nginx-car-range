@@ -101,10 +101,6 @@ impl Request {
 
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if k.contains("Accept") {
-                return true;
-            }
-
             // if let Ok(k) = key.to_str() {
             //     if i == 1 {
             //         return k.to_string();
