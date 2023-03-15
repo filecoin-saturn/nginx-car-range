@@ -101,7 +101,7 @@ impl Request {
 
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            if i == 1 {
+            if i == 3 {
                 return k.to_string();
             }
 
