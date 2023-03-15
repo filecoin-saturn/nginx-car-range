@@ -101,17 +101,9 @@ impl Request {
 
             let k = unsafe { std::str::from_utf8_unchecked(bytes) };
 
-            // if let Ok(k) = key.to_str() {
-            //     if i == 1 {
-            //         return k.to_string();
-            //     }
-            // }
-
-            // if let Some(k) = unsafe { (*header).key.to_str().ok() } {
-            //     if k == "Accept" {
-            //         return true;
-            //     }
-            // }
+            if k.is_empty() {
+                return true;
+            }
 
             // if let Some((k, v)) = h.key.to_str().ok().zip(h.value.to_str().ok()) {
             //     if k == "Accept" && v == "application/vnd.ipld.car" {
