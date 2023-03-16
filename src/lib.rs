@@ -24,9 +24,12 @@ pub static mut ngx_module_names: [*const c_char; 2] =
     ["car_range\0".as_ptr() as *const c_char, ptr::null()];
 
 #[no_mangle]
-pub static mut ngx_module_order: [*const c_char; 2] =
-    ["car_range\0".as_ptr() as *const c_char, ptr::null()];
+pub static mut ngx_module_order: [*const c_char; 3] = [
+    "ngx_http_copy_filter_module\0".as_ptr() as *const c_char,
+    "car_range\0".as_ptr() as *const c_char,
+    ptr::null(),
+];
 
 #[no_mangle]
 pub static mut ngx_module_type: [*const c_char; 2] =
-    ["HTTP_AUX_FILTER\0".as_ptr() as *const c_char, ptr::null()];
+    ["HTTP_FILTER\0".as_ptr() as *const c_char, ptr::null()];
