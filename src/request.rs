@@ -1,4 +1,5 @@
 use crate::bindings::*;
+use crate::pool::Pool;
 use std::borrow::Cow;
 use std::ops::Bound;
 
@@ -48,6 +49,12 @@ impl Request {
 
     pub fn connection(&self) -> *mut ngx_connection_t {
         self.0.connection
+    }
+
+    /// Request pool.
+    pub fn pool(&self) -> Pool {
+        // SAFETY: This request is allocated from `pool`, thus must be a valid pool.
+        unsafe { Pool::from_ngx_pool(self.0.pool) }
     }
 
     pub fn range(&self) -> Option<(Bound<u64>, Bound<u64>)> {
