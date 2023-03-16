@@ -1,5 +1,6 @@
 mod bindings;
 mod car_reader;
+mod log;
 pub mod module;
 mod pool;
 mod request;

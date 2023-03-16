@@ -370,6 +370,7 @@ version = "0.1.0"
 dependencies = [
  "bindgen",
  "cid 0.10.1",
+ "core2",
  "form_urlencoded",
  "hex",
  "num_enum",

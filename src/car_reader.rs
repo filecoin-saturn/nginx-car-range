@@ -1,7 +1,10 @@
 use crate::bindings::*;
+use crate::log::ngx_log_debug_http;
 use crate::pool::{Buffer, MemoryBuffer};
+use crate::request::Request;
 use crate::varint::VarInt;
 use cid::Cid;
+use core2::io::Cursor;
 use serde::{Deserialize, Serialize};
 // use prost::Message;
 // use std::ops::{Bound, RangeBounds};
@@ -35,7 +38,7 @@ pub enum DataType {
     HamtShard = 5,
 }
 
-pub fn read_car(input: *mut ngx_chain_t) -> Option<CarHeader> {
+pub fn read_car(req: &mut Request, input: *mut ngx_chain_t) -> Option<CarHeader> {
     let mut header: Option<CarHeader> = None;
     let mut cl = input;
 
@@ -43,9 +46,28 @@ pub fn read_car(input: *mut ngx_chain_t) -> Option<CarHeader> {
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
 
         let bytes = buf.as_bytes();
+        let mut pos = 0;
 
-        if let Some((size, read)) = usize::decode_var(bytes) {
-            header = serde_ipld_dagcbor::from_slice(&bytes[read..size + read]).ok();
+        while pos < bytes.len() {
+            if let Some((size, read)) = usize::decode_var(&bytes[pos..]) {
+                let bound = size + read;
+
+                if header.is_none() {
+                    header = serde_ipld_dagcbor::from_slice(&bytes[read..bound]).ok();
+                }
+
+                let mut cursor = Cursor::new(&bytes[read..bound]);
+                if let Ok(cid) = Cid::read_bytes(&mut cursor) {
+                    // let blk = &bytes[cursor.position() as usize..bound];
+                    ngx_log_debug_http!(req, "car_range decoded block {:?}", cid);
+                }
+
+                pos += bound;
+            } else {
+                // TODO: the frame is split between multiple buffers?
+                // would need to allocate in a new buffer.
+                return None;
+            }
         }
 
         cl = unsafe { (*cl).next };

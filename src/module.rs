@@ -1,5 +1,6 @@
 use crate::bindings::*;
 use crate::car_reader::read_car;
+use crate::log::ngx_log_debug_http;
 use crate::request::*;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -16,19 +17,6 @@ macro_rules! ngx_string {
             data: concat!($s, "\0").as_ptr() as *mut u8,
         }
     }};
-}
-
-/// [`NGX_LOG_DEBUG_HTTP`]: https://nginx.org/en/docs/dev/development_guide.html#logging
-macro_rules! ngx_log_debug_http {
-    ( $request:expr, $($arg:tt)* ) => {
-        let log = unsafe { (*$request.connection()).log };
-        let level = NGX_LOG_DEBUG as ngx_uint_t;
-        let fmt = std::ffi::CString::new("%s").unwrap();
-        let c_message = std::ffi::CString::new(format!($($arg)*)).unwrap();
-        unsafe {
-            ngx_log_error_core(level, log, 0, fmt.as_ptr(), c_message.as_ptr());
-        }
-    }
 }
 
 #[no_mangle]
@@ -138,7 +126,7 @@ extern "C" fn ngx_car_range_body_filter(
         bail!();
     }
 
-    if let Some(header) = read_car(body) {
+    if let Some(header) = read_car(req, body) {
         ngx_log_debug_http!(
             req,
             "car_range reading car with root: {:?}",
