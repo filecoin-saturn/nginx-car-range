@@ -1,7 +1,7 @@
 mod bindings;
-mod pool;
-// mod car_reader;
+mod car_reader;
 pub mod module;
+mod pool;
 mod request;
 mod varint;
 

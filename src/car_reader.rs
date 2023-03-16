@@ -1,8 +1,9 @@
+use crate::bindings::*;
+use crate::pool::{Buffer, MemoryBuffer};
+use crate::varint::VarInt;
 use cid::Cid;
-// use integer_encoding::{VarIntReader, VarIntWriter};
-// use prost::Message;
 use serde::{Deserialize, Serialize};
-// use std::io::{self, Read, Write};
+// use prost::Message;
 // use std::ops::{Bound, RangeBounds};
 
 mod unixfs_pb {
@@ -15,7 +16,7 @@ mod dag_pb {
 
 // CAR V1 header, should contain a single root and be CBOR encoded
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
-struct CarHeader {
+pub struct CarHeader {
     pub roots: Vec<Cid>,
     pub version: u64,
 }
@@ -32,6 +33,25 @@ pub enum DataType {
     Metadata = 3,
     Symlink = 4,
     HamtShard = 5,
+}
+
+pub fn read_car(input: *mut ngx_chain_t) -> Option<CarHeader> {
+    let mut header: Option<CarHeader> = None;
+    let mut cl = input;
+
+    while !cl.is_null() {
+        let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+
+        let bytes = buf.as_bytes();
+
+        if let Some((size, read)) = usize::decode_var(bytes) {
+            header = serde_ipld_dagcbor::from_slice(&bytes[read..size + read]).ok();
+        }
+
+        cl = unsafe { (*cl).next };
+    }
+
+    header
 }
 
 // #[derive(Debug, Clone, PartialEq, Eq)]
