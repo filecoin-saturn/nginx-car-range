@@ -145,6 +145,8 @@ extern "C" fn ngx_car_range_body_filter(
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
         count += buf.len();
 
+        ngx_log_debug_http!(req, "car_range buf slice size {}", buf.as_bytes().len());
+
         cl = unsafe { (*cl).next };
     }
 
