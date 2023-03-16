@@ -1,6 +1,5 @@
 use crate::bindings::*;
 use crate::request::*;
-use std::ops::Bound;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -32,16 +31,16 @@ macro_rules! ngx_log_debug_http {
 }
 
 #[no_mangle]
-pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
+pub static mut ngx_http_next_body_filter: ngx_http_output_body_filter_pt = None;
 
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("car_range"), /* directive */
         type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t, /* location context and takes no arguments*/
-        set: Some(ngx_car_range), /* configuration setup function */
-        conf: 0,                  /* No offset. Only one context is supported. */
-        offset: 0,                /* No offset when storing the module configuration on struct. */
+        set: Some(ngx_car_range_cfg), /* configuration setup function */
+        conf: 0,                      /* No offset. Only one context is supported. */
+        offset: 0, /* No offset when storing the module configuration on struct. */
         post: ptr::null_mut(),
     },
     /* command termination */
@@ -105,117 +104,43 @@ pub static mut ngx_car_range_module: ngx_module_t = ngx_module_t {
     spare_hook7: 0,
 };
 
-unsafe fn ngx_http_conf_get_module_loc_conf(
-    cf: *mut ngx_conf_t,
-    module: &ngx_module_t,
-) -> *mut c_void {
-    let http_conf_ctx = (*cf).ctx as *mut ngx_http_conf_ctx_t;
-    *(*http_conf_ctx).loc_conf.add(module.ctx_index)
-}
-
 #[no_mangle]
-unsafe extern "C" fn ngx_car_range(
+unsafe extern "C" fn ngx_car_range_cfg(
     _cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
     _conf: *mut c_void,
 ) -> *mut c_char {
-    // let clcf = ngx_http_conf_get_module_loc_conf(cf, &ngx_http_core_module)
-    //     as *mut ngx_http_core_loc_conf_t;
-    // (*clcf).handler = Some(ngx_car_range_handler);
-
     ptr::null_mut()
 }
 
-struct CarRangeCtx {
-    range: (Bound<u64>, Bound<u64>),
-}
-
-const BAIL: ngx_int_t = NGX_DECLINED as ngx_int_t;
-
 #[no_mangle]
-extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int_t {
+extern "C" fn ngx_car_range_body_filter(
+    r: *mut ngx_http_request_t,
+    body: *mut ngx_chain_t,
+) -> ngx_int_t {
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
-    ngx_log_debug_http!(req, "http car_range header filter {}", env!("GIT_HASH"));
+    ngx_log_debug_http!(req, "http car_range body filter {}", env!("GIT_HASH"));
 
     // call the next filter in the chain when we exit
     macro_rules! bail {
         () => {
             return unsafe {
-                ngx_http_next_header_filter
-                    .map(|cb| cb(r))
+                ngx_http_next_body_filter
+                    .map(|cb| cb(r, body))
                     .unwrap_or(NGX_ERROR as ngx_int_t)
             }
         };
     }
 
-    // if !req.accept_car() {
-    //     bail!();
-    // }
-    // Check if range request
-    // let range = match req.range() {
-    //     Some(range_val) => range_val,
-    //     None => return BAIL,
-    // };
-
-    // let pool = req.pool();
     bail!()
 }
 
 // Prepend to filter chain
 #[no_mangle]
 unsafe extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
-    ngx_http_next_header_filter = ngx_http_top_header_filter;
-    ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
+    ngx_http_next_body_filter = ngx_http_top_body_filter;
+    ngx_http_top_body_filter = Some(ngx_car_range_body_filter);
 
     return NGX_OK as ngx_int_t;
-}
-
-#[no_mangle]
-extern "C" fn ngx_car_range_handler(r: *mut ngx_http_request_t) -> ngx_int_t {
-    let req = unsafe { &mut Request::from_ngx_http_request(r) };
-
-    ngx_log_debug_http!(req, "http car_range handler {}", env!("GIT_HASH"));
-
-    if !req.accept_car() {
-        return BAIL;
-    }
-
-    // Check if range request
-    let range = match req.range() {
-        Some(range_val) => range_val,
-        None => return BAIL,
-    };
-
-    let body = format!("Range {:?}\n", range);
-
-    req.set_status(NGX_HTTP_OK as ngx_uint_t);
-    req.set_content_length(body.len());
-    req.set_content_type(ngx_string!("text/plain"));
-
-    let status = req.send_header();
-    if status == NGX_ERROR as ngx_int_t || status != NGX_OK as ngx_int_t {
-        return status;
-    }
-
-    // put the string into the buffer pool so it will be dealocated automatically
-    let buf = unsafe {
-        let bstr = &body;
-        let mut buf = ngx_create_temp_buf(req.0.pool, bstr.len());
-        std::ptr::copy_nonoverlapping(body.as_ptr(), (*buf).pos, bstr.len());
-        (*buf).last = (*buf).pos.add(bstr.len());
-        (*buf).set_last_buf(1);
-        (*buf).set_last_in_chain(1);
-        buf
-    };
-
-    // Insertion in the buffer chain.
-    let mut out = ngx_chain_t {
-        buf,
-        // only one buffer
-        next: ptr::null_mut(),
-    };
-
-    // Send the body, and return the status code of the output filter chain.
-    unsafe { ngx_http_output_filter(&mut req.0, &mut out) as ngx_int_t }
 }

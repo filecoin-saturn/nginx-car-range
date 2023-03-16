@@ -29,7 +29,7 @@ COPY --from=builder /usr/local/nginx /usr/local/nginx
 COPY --from=builder /opt/nginx-car-range/target/debug/libnginx_car_range.so /usr/local/lib/libnginx_car_range.so
 COPY --from=builder /opt/nginx-car-range/car /usr/local/bin/car
 
-COPY fixture.car /var/www/html/fixture.car
+COPY fixture.car /usr/local/nginx/html/fixture.car
 COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY ci.sh /ci.sh
 RUN chmod u+rwx /ci.sh
