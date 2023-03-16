@@ -1,4 +1,5 @@
 use crate::bindings::*;
+use crate::pool::{Buffer, MemoryBuffer};
 use crate::request::*;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -141,8 +142,8 @@ extern "C" fn ngx_car_range_body_filter(
     let mut count = 0;
 
     while !cl.is_null() {
-        let buf = unsafe { *(*cl).buf };
-        count += usize::wrapping_sub(buf.last as _, buf.pos as _);
+        let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+        count += buf.len();
 
         cl = unsafe { (*cl).next };
     }
