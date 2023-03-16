@@ -133,6 +133,22 @@ extern "C" fn ngx_car_range_body_filter(
         };
     }
 
+    if !req.accept_car() {
+        bail!();
+    }
+
+    let mut cl = body;
+    let mut count = 0;
+
+    while !cl.is_null() {
+        let buf = unsafe { *(*cl).buf };
+        count += usize::wrapping_sub(buf.last as _, buf.pos as _);
+
+        cl = unsafe { (*cl).next };
+    }
+
+    ngx_log_debug_http!(req, "car_range body size {}", count);
+
     bail!()
 }
 
