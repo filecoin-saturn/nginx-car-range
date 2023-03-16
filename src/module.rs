@@ -1,6 +1,7 @@
 use crate::bindings::*;
 use crate::pool::{Buffer, MemoryBuffer};
 use crate::request::*;
+use crate::varint::VarInt;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -139,18 +140,16 @@ extern "C" fn ngx_car_range_body_filter(
     }
 
     let mut cl = body;
-    let mut count = 0;
 
     while !cl.is_null() {
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
-        count += buf.len();
 
-        ngx_log_debug_http!(req, "car_range buf slice size {}", buf.as_bytes().len());
+        if let Some((size, _read)) = usize::decode_var(buf.as_bytes()) {
+            ngx_log_debug_http!(req, "car_range header size {}", size);
+        }
 
         cl = unsafe { (*cl).next };
     }
-
-    ngx_log_debug_http!(req, "car_range body size {}", count);
 
     bail!()
 }

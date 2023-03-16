@@ -125,30 +125,4 @@ mod tests {
         // We read 1 byte
         assert_eq!(read, 1);
     }
-
-    #[test]
-    fn test_buffer_fun() {
-        use crate::bindings::*;
-
-        let car_data = hex::decode("3aa265726f6f747381d82a58250001711220151fe9e73c6267a7060c6f6c4cca943c236f4b196723489608edb42a8b8fa80b6776657273696f6e012c01711220151fe9e73c6267a7060c6f6c4cca943c236f4b196723489608edb42a8b8fa80ba165646f646779f5").unwrap();
-
-        let (size, read) = usize::decode_var(&car_data[..]).unwrap();
-
-        let car_head = &car_data[read..size + read];
-
-        let buf = ngx_buf_s {
-            pos: &car_head.as_ptr() as *const _ as *mut u_char,
-            last: &car_head.as_ptr() as *const _ as *mut u_char,
-            file_pos: 0,
-            file_last: 0,
-            start: &car_head.as_ptr() as *const _ as *mut u_char,
-            end: &car_head.as_ptr() as *const _ as *mut u_char,
-            tag: std::ptr::null_mut(),
-            file: std::ptr::null_mut(),
-            shadow: std::ptr::null_mut(),
-            _bitfield_align_1: [0u8; 0],
-            _bitfield_1: ngx_buf_s::new_bitfield_1(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-            num: 0,
-        };
-    }
 }
