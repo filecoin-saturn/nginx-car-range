@@ -1,8 +1,10 @@
 mod bindings;
-mod pool;
-// mod car_reader;
+mod car_reader;
+mod log;
 pub mod module;
+mod pool;
 mod request;
+mod varint;
 
 use crate::bindings::*;
 use crate::module::ngx_car_range_module;

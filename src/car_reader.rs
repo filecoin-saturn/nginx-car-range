@@ -1,9 +1,12 @@
+use crate::bindings::*;
+use crate::pool::{Buffer, MemoryBuffer};
+use crate::varint::VarInt;
+use anyhow::{format_err, Result};
 use cid::Cid;
-// use integer_encoding::{VarIntReader, VarIntWriter};
-// use prost::Message;
+use core2::io::Cursor;
+use prost::Message;
 use serde::{Deserialize, Serialize};
-// use std::io::{self, Read, Write};
-// use std::ops::{Bound, RangeBounds};
+use std::ops::RangeBounds;
 
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -15,7 +18,7 @@ mod dag_pb {
 
 // CAR V1 header, should contain a single root and be CBOR encoded
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
-struct CarHeader {
+pub struct CarHeader {
     pub roots: Vec<Cid>,
     pub version: u64,
 }
@@ -34,229 +37,211 @@ pub enum DataType {
     HamtShard = 5,
 }
 
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// pub struct Link {
-//     pub cid: Cid,
-//     pub name: Option<String>,
-//     pub tsize: Option<u64>,
-// }
+/// CarFrameReader return each length prefixed frame included in the given byte range.
+/// It keeps each frame intact so we don't need to allocate extra buffers.
+pub struct CarFrameReader<'a, R: RangeBounds<u64>> {
+    range: R,
+    buffers: *mut ngx_chain_t,
+    pos: u64,
+    current: &'a [u8],
+    header: &'a [u8],
+}
 
-// // Reads a length prefixed chunk
-// fn lp_read<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
-//     let l: usize = reader.read_varint()?;
-//     let mut buf = vec![0u8; l];
-//     reader.read_exact(&mut buf)?;
-//     Ok(buf)
-// }
+impl<'a, R: RangeBounds<u64>> CarFrameReader<'a, R> {
+    pub fn new(range: R, input: *mut ngx_chain_t) -> Result<Self> {
+        if input.is_null() {
+            return Err(format_err!("null buffer chain ptr"));
+        }
 
-// // Writes a length prefixed byte slice and flushes the writer
-// fn lp_write<W: Write>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
-//     writer.write_varint(bytes.len())?;
-//     writer.write_all(bytes)?;
-//     writer.flush()?;
-//     Ok(())
-// }
+        let buf = unsafe { MemoryBuffer::from_ngx_buf((*input).buf) };
+        let bytes = buf.as_bytes();
 
-// // Decodes the length prefixed block frame, returns the CID and data payload
-// fn read_block<R: Read>(r: &mut R) -> Option<anyhow::Result<(Cid, Vec<u8>)>> {
-//     let buf = match lp_read(r) {
-//         Ok(buf) => buf,
-//         Err(e) => match e.kind() {
-//             io::ErrorKind::UnexpectedEof => return None,
-//             _ => return Some(Err(e.into())),
-//         },
-//     };
-//     if buf.is_empty() {
-//         return None;
-//     }
+        let (size, read) =
+            usize::decode_var(bytes).ok_or_else(|| format_err!("could not decode header frame"))?;
 
-//     let mut cursor = io::Cursor::new(&buf);
-//     match Cid::read_bytes(&mut cursor) {
-//         Ok(cid) => Some(Ok((cid, buf[cursor.position() as usize..].to_vec()))),
-//         Err(e) => Some(Err(e.into())),
-//     }
-// }
+        let (header, current) = bytes.split_at(size + read);
 
-// // Read the header and write it back to the stream before returning.
-// fn read_header<R: Read + Write>(stdin: &mut R) -> anyhow::Result<CarHeader> {
-//     let header_buf = lp_read(stdin)?;
+        Ok(Self {
+            range,
+            buffers: input,
+            pos: 0,
+            current,
+            header,
+        })
+    }
 
-//     let header: CarHeader = serde_ipld_dagcbor::from_slice(&header_buf[..])?;
+    pub fn header_frame(&self) -> &'a [u8] {
+        self.header
+    }
 
-//     if header.roots.is_empty() {
-//         return Err(anyhow::format_err!("invalid CAR file"));
-//     }
+    // If codec is unixfs, advance the cursor else just return an error
+    fn consume(&mut self, cid: Cid, data: &[u8]) -> Result<()> {
+        match cid.codec() {
+            0x70 => {
+                let outer = dag_pb::PbNode::decode(data).map_err(|e| format_err!("{}", e))?;
+                let inner_data = outer
+                    .data
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| format_err!("missing unxifs data field"))?;
+                let inner =
+                    unixfs_pb::Data::decode(inner_data).map_err(|e| format_err!("{}", e))?;
 
-//     if header.version != 1 {
-//         return Err(anyhow::format_err!("only CAR v1 is supported"));
-//     }
+                // let dt: DataType = inner.r#type.try_into().ok()?;
 
-//     // forward it back
-//     lp_write(stdin, &header_buf)?;
+                if outer.links.len() == 0 && inner.data.is_some() {
+                    self.pos += inner.data.as_ref().map(|d| d.len() as u64).unwrap();
+                    return Ok(());
+                }
+            }
+            0x55 => {
+                self.pos += data.len() as u64;
+                return Ok(());
+            }
+            _ => (),
+        }
+        Err(format_err!("not unixfs chunk"))
+    }
+}
 
-//     Ok(header)
-// }
+impl<'a, R: RangeBounds<u64>> Iterator for CarFrameReader<'a, R> {
+    type Item = &'a [u8];
 
-// // Abstraction over an nginx HTTP request providing read and write interface with a range iterator.
-// pub trait Request: Read + Write {
-//     fn range<'a>(&'a self) -> Box<dyn Iterator<Item = (Bound<u64>, Bound<u64>)> + 'a>;
-//     fn forward(&mut self) -> io::Result<u64>;
-// }
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current.is_empty() {
+                let input = unsafe { (*self.buffers).next };
+                if input.is_null() {
+                    return None;
+                }
 
-// // The nginx module handler takes a request trait and returns Ok if all goes well.
-// // The Result will be translated to an nginx status integer code.
-// pub fn nginx_handler<R: Request>(mut req: R) -> anyhow::Result<()> {
-//     let maybe_range = req.range().next();
-//     // TODO: support multiple range if needed.
-//     let range = match maybe_range {
-//         Some(rg) => rg,
-//         None => {
-//             // send the bytes to the writer immediately
-//             req.forward()?;
-//             return Ok(());
-//         }
-//     };
+                let buf = unsafe { MemoryBuffer::from_ngx_buf((*input).buf) };
+                self.current = buf.as_bytes();
+                self.buffers = input;
+            }
 
-//     let _car_header = read_header(&mut req)?;
+            let (size, read) = usize::decode_var(self.current)?;
+            let (frame, next) = &self.current.split_at(size + read);
+            self.current = next;
 
-//     let mut current: u64 = 0;
+            let mut cursor = Cursor::new(&frame[read..]);
+            let cid = Cid::read_bytes(&mut cursor).ok()?;
+            // block data
+            let data = &frame[cursor.position() as usize..];
 
-//     while let Some(blk) = read_block(&mut req) {
-//         let (cid, data) = blk?;
+            // If the blocks were consumed as unixfs chunks we check
+            // whether the cursor is within the range.
+            if let Ok(()) = self.consume(cid, data) {
+                if !self.range.contains(&self.pos) {
+                    continue;
+                }
+            }
 
-//         // by default we write back the blocks, skipping a block is an explicit rule added below.
-//         match cid.codec() {
-//             0x70 => {
-//                 let outer = dag_pb::PbNode::decode(&data[..])?;
-//                 let inner_data = outer
-//                     .data
-//                     .as_ref()
-//                     .cloned()
-//                     .ok_or_else(|| anyhow::format_err!("missing data"))?;
-//                 let inner = unixfs_pb::Data::decode(inner_data)?;
+            return Some(frame);
+        }
+    }
+}
 
-//                 let dt: DataType = inner.r#type.try_into()?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//                 if outer.links.len() == 0 && inner.data.is_some() {
-//                     let skip = !range.contains(&current);
-//                     current += inner.data.as_ref().map(|d| d.len() as u64).unwrap();
-//                     if skip {
-//                         continue;
-//                     }
-//                 }
-//             }
-//             0x55 => {
-//                 let skip = !range.contains(&current);
-//                 current += data.len() as u64;
-//                 if skip {
-//                     continue;
-//                 }
-//             }
-//             _ => (),
-//         }
-//         lp_write(&mut req, &[cid.to_bytes(), data].concat())?;
-//     }
-//     Ok(())
-// }
+    fn to_ngx_buf(buf: &[u8]) -> ngx_buf_s {
+        let slice_ptr = buf.as_ptr_range();
 
-// // This is a request object for testing the handler.
-// pub struct MockRequest<R, W> {
-//     reader: R,
-//     writer: W,
-//     range: Option<String>,
-// }
+        ngx_buf_s {
+            pos: slice_ptr.start as *mut u_char,
+            last: slice_ptr.end as *mut u_char,
+            file_pos: 0,
+            file_last: 0,
+            start: slice_ptr.start as *mut u_char,
+            end: slice_ptr.end as *const _ as *mut u_char,
+            tag: std::ptr::null_mut(),
+            file: std::ptr::null_mut(),
+            shadow: std::ptr::null_mut(),
+            _bitfield_align_1: [0u8; 0],
+            _bitfield_1: ngx_buf_s::new_bitfield_1(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            num: 0,
+        }
+    }
 
-// impl<R, W> MockRequest<R, W> {
-//     pub fn new(reader: R, writer: W, range: impl RangeBounds<u64>) -> Self {
-//         Self {
-//             reader,
-//             writer,
-//             range: match (range.start_bound(), range.end_bound()) {
-//                 (Bound::Unbounded, Bound::Included(end)) => Some(format!("bytes=-{}", end)),
-//                 (Bound::Unbounded, Bound::Excluded(&end)) => Some(format!("bytes=-{}", end - 1)),
-//                 (Bound::Included(start), Bound::Included(end)) => {
-//                     Some(format!("bytes={}-{}", start, end))
-//                 }
-//                 (Bound::Included(start), Bound::Excluded(&end)) => {
-//                     Some(format!("bytes={}-{}", start, end - 1))
-//                 }
-//                 (Bound::Included(start), Bound::Unbounded) => Some(format!("bytes={}-", start)),
-//                 _ => None,
-//             },
-//         }
-//     }
-// }
+    #[test]
+    fn test_car_single_block() {
+        use crate::bindings::*;
+        let car_data = hex::decode("38a265726f6f747381d82a582300122046d44814b9c5af141c3aaab7c05dc5e844ead5f91f12858b021eba45768b4c0e6776657273696f6e0136122046d44814b9c5af141c3aaab7c05dc5e844ead5f91f12858b021eba45768b4c0e0a120802120c68656c6c6f20776f726c640a180c").unwrap();
 
-// fn parse_bound(s: &str) -> Option<Bound<u64>> {
-//     if s.is_empty() {
-//         return Some(Bound::Unbounded);
-//     }
+        let buf = to_ngx_buf(&car_data[..]);
 
-//     s.parse().ok().map(Bound::Included)
-// }
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
 
-// impl<R: Read, W: Write> Request for MockRequest<R, W> {
-//     fn range<'a>(&'a self) -> Box<dyn Iterator<Item = (Bound<u64>, Bound<u64>)> + 'a> {
-//         if let Some(s) = self.range.as_ref() {
-//             Box::new(s["bytes=".len()..].split(',').filter_map(|spec| {
-//                 let mut iter = spec.trim().splitn(2, '-');
-//                 Some((parse_bound(iter.next()?)?, parse_bound(iter.next()?)?))
-//             }))
-//         } else {
-//             Box::new(std::iter::empty())
-//         }
-//     }
-//     fn forward(&mut self) -> io::Result<u64> {
-//         io::copy(&mut self.reader, &mut self.writer)
-//     }
-// }
+        let cr = CarFrameReader::new(.., &chain as *const _ as *mut _).unwrap();
 
-// impl<R: Read, W: Write> Read for MockRequest<R, W> {
-//     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-//         self.reader.read(buf)
-//     }
-// }
+        let mut buf = cr.header_frame().to_vec();
 
-// impl<R: Read, W: Write> Write for MockRequest<R, W> {
-//     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-//         self.writer.write(buf)
-//     }
-//     fn flush(&mut self) -> io::Result<()> {
-//         self.writer.flush()
-//     }
-// }
+        for frame in cr {
+            buf.extend_from_slice(frame);
+        }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use std::io::Cursor;
+        assert_eq!(buf, car_data);
+    }
 
-//     #[test]
-//     fn non_unixfs_request() {
-//         let mut buff = Cursor::new(vec![0; 104]);
+    #[test]
+    fn test_car_iter() {
+        use crate::bindings::*;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
 
-//         let car_data = hex::decode("3aa265726f6f747381d82a58250001711220151fe9e73c6267a7060c6f6c4cca943c236f4b196723489608edb42a8b8fa80b6776657273696f6e012c01711220151fe9e73c6267a7060c6f6c4cca943c236f4b196723489608edb42a8b8fa80ba165646f646779f5").unwrap();
+        let f = File::open("iconfixture.car").unwrap();
+        let mut reader = BufReader::new(f);
 
-//         let req = MockRequest::new(&car_data[..], &mut buff, ..);
+        let car_data = reader.fill_buf().unwrap();
 
-//         nginx_handler(req).unwrap();
+        let buf = to_ngx_buf(car_data);
 
-//         // the handler should forward the car file as is
-//         assert_eq!(buff.get_ref(), &car_data);
-//     }
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
 
-//     #[test]
-//     fn unixfs_single_node() {
-//         let mut buff = Cursor::new(vec![0; 112]);
+        let cr = CarFrameReader::new(.., &chain as *const _ as *mut _).unwrap();
 
-//         let car_data = hex::decode("38a265726f6f747381d82a582300122046d44814b9c5af141c3aaab7c05dc5e844ead5f91f12858b021eba45768b4c0e6776657273696f6e0136122046d44814b9c5af141c3aaab7c05dc5e844ead5f91f12858b021eba45768b4c0e0a120802120c68656c6c6f20776f726c640a180c").unwrap();
+        let mut buf = cr.header_frame().to_vec();
 
-//         let req = MockRequest::new(&car_data[..], &mut buff, 0..50);
+        for frame in cr {
+            buf.extend_from_slice(frame);
+        }
 
-//         nginx_handler(req).unwrap();
+        assert_eq!(buf, car_data.to_vec());
+    }
 
-//         // the handler should forward the car file as is because the range is withing the only
-//         // block.
-//         assert_eq!(buff.get_ref(), &car_data);
-//     }
-// }
+    #[test]
+    fn test_car_iter_range() {
+        use crate::bindings::*;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let f = File::open("iconfixture.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let car_data = reader.fill_buf().unwrap();
+
+        let car_slice = &car_data[..];
+
+        let buf = to_ngx_buf(car_slice);
+
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let cr = CarFrameReader::new(..4000, &chain as *const _ as *mut _).unwrap();
+
+        let count = cr.count();
+
+        assert_eq!(count, 4);
+    }
+}

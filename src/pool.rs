@@ -1,4 +1,5 @@
 use crate::bindings::*;
+use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::{mem, ptr};
 
@@ -42,12 +43,12 @@ unsafe extern "C" fn cleanup_type<T>(data: *mut c_void) {
     ptr::drop_in_place(data as *mut T);
 }
 
-pub trait Buffer {
+pub trait Buffer<'a> {
     fn as_ngx_buf(&self) -> *const ngx_buf_t;
 
     fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t;
 
-    fn as_bytes(&self) -> &[u8] {
+    fn as_bytes(&self) -> &'a [u8] {
         let buf = self.as_ngx_buf();
         unsafe { std::slice::from_raw_parts((*buf).pos, self.len()) }
     }
@@ -81,21 +82,27 @@ pub trait Buffer {
     }
 }
 
-pub struct MemoryBuffer(*mut ngx_buf_t);
+pub struct MemoryBuffer<'a> {
+    inner: *mut ngx_buf_t,
+    _marker: PhantomData<&'a ()>,
+}
 
-impl MemoryBuffer {
-    pub fn from_ngx_buf(buf: *mut ngx_buf_t) -> MemoryBuffer {
+impl<'a> MemoryBuffer<'a> {
+    pub fn from_ngx_buf(buf: *mut ngx_buf_t) -> MemoryBuffer<'a> {
         assert!(!buf.is_null());
-        MemoryBuffer(buf)
+        MemoryBuffer {
+            inner: buf,
+            _marker: PhantomData,
+        }
     }
 }
 
-impl Buffer for MemoryBuffer {
+impl<'a> Buffer<'a> for MemoryBuffer<'a> {
     fn as_ngx_buf(&self) -> *const ngx_buf_t {
-        self.0
+        self.inner
     }
 
     fn as_ngx_buf_mut(&mut self) -> *mut ngx_buf_t {
-        self.0
+        self.inner
     }
 }
