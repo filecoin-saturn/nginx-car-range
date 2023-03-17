@@ -139,8 +139,19 @@ extern "C" fn ngx_car_range_body_filter(
         }
     };
 
-    let count = cfr.count();
-    ngx_log_debug_http!(req, "car_range: read {} blocks", count);
+    let mut count = 0;
+    let mut size = cfr.header_frame().len();
+    for frame in cfr {
+        count += 1;
+        size += frame.len();
+    }
+
+    ngx_log_debug_http!(
+        req,
+        "car_range: read {} blocks, total size: {}",
+        count,
+        size
+    );
 
     bail!()
 }
