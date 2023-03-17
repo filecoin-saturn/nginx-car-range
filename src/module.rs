@@ -1,5 +1,5 @@
 use crate::bindings::*;
-use crate::car_reader::read_car;
+use crate::car_reader::CarFrameReader;
 use crate::log::ngx_log_debug_http;
 use crate::request::*;
 use std::os::raw::{c_char, c_void};
@@ -126,13 +126,21 @@ extern "C" fn ngx_car_range_body_filter(
         bail!();
     }
 
-    if let Some(header) = read_car(req, body) {
-        ngx_log_debug_http!(
-            req,
-            "car_range reading car with root: {:?}",
-            header.roots[0]
-        );
-    }
+    let range = match req.range() {
+        Some(range) => range,
+        None => bail!(),
+    };
+
+    let cfr = match CarFrameReader::new(range, body) {
+        Ok(cfr) => cfr,
+        Err(e) => {
+            ngx_log_debug_http!(req, "car_range: read_car: error: {}", e);
+            bail!();
+        }
+    };
+
+    let count = cfr.count();
+    ngx_log_debug_http!(req, "car_range: read {} blocks", count);
 
     bail!()
 }
