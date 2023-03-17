@@ -195,7 +195,7 @@ mod tests {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
 
-        let f = File::open("iconfixture.car").unwrap();
+        let f = File::open("fixture.car").unwrap();
         let mut reader = BufReader::new(f);
 
         let car_data = reader.fill_buf().unwrap();
@@ -224,7 +224,7 @@ mod tests {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
 
-        let f = File::open("iconfixture.car").unwrap();
+        let f = File::open("fixture.car").unwrap();
         let mut reader = BufReader::new(f);
 
         let car_data = reader.fill_buf().unwrap();
