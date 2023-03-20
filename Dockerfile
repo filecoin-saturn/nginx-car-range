@@ -1,7 +1,5 @@
 FROM rust:1.67 as builder
 
-ARG MODE
-ARG ARCH
 ARG NGINX_VERSION="1.23.3"
 
 WORKDIR /opt/nginx-car-range/
@@ -22,7 +20,7 @@ RUN curl -LO https://github.com/ipld/go-car/releases/download/v2.8.0/go-car_2.8.
 # build the plugin
 COPY . .
 
-RUN if [ "$MODE" == "release" ]; then NGINX_DIR=/opt/nginx cargo build --release -v; else NGINX_DIR=/opt/nginx cargo build -v; fi
+RUN cargo build -v && cargo build --release -v
 
 FROM scratch as release
 COPY --from=builder /opt/nginx-car-range/target/release/libnginx_car_range.so /libnginx_car_range.so
