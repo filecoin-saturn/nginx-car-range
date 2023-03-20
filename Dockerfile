@@ -1,12 +1,16 @@
 FROM rust:1.67 as builder
 
+ARG MODE
+ARG ARCH
+ARG NGINX_VERSION="1.23.3"
+
 WORKDIR /opt/nginx-car-range/
 
 # basics
 RUN apt update && apt install -y build-essential unzip llvm-dev libclang-dev clang libpcre3 libpcre3-dev zlib1g-dev
 
-# nginx to build against. pinned @ 1.18 as distributed by saturn
-RUN curl -LO https://nginx.org/download/nginx-1.18.0.tar.gz && mkdir /opt/nginx && tar -xf nginx-1.18.0.tar.gz --strip-components=1 -C /opt/nginx && ls /opt/nginx && rm nginx-1.18.0.tar.gz
+# nginx to build against. pinned @ 1.23 as distributed by saturn
+RUN curl -LO https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && mkdir /opt/nginx && tar -xf nginx-${NGINX_VERSION}.tar.gz --strip-components=1 -C /opt/nginx && ls /opt/nginx && rm nginx-${NGINX_VERSION}.tar.gz
 RUN cd /opt/nginx && ./configure --prefix=/usr/local/nginx --with-debug && make && make install && cd /opt/nginx-car-range/
 
 # protobuf. pinned @ v3.22.1
@@ -18,7 +22,10 @@ RUN curl -LO https://github.com/ipld/go-car/releases/download/v2.8.0/go-car_2.8.
 # build the plugin
 COPY . .
 
-RUN NGINX_DIR=/opt/nginx cargo build -v
+RUN if [ "$MODE" == "release" ]; then NGINX_DIR=/opt/nginx cargo build --release -v; else NGINX_DIR=/opt/nginx cargo build -v; fi
+
+FROM scratch as release
+COPY --from=builder /opt/nginx-car-range/target/release/libnginx_car_range.so /libnginx_car_range.so
 
 FROM buildpack-deps:bullseye-curl as ci
 
