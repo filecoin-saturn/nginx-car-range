@@ -5,7 +5,7 @@ ARG NGINX_VERSION="1.23.3"
 WORKDIR /opt/nginx-car-range/
 
 # basics
-RUN apt update && apt install -y build-essential unzip llvm-dev libclang-dev clang libpcre3 libpcre3-dev zlib1g-dev
+RUN apt update && apt install -y build-essential git unzip llvm-dev libclang-dev clang libpcre3 libpcre3-dev zlib1g-dev
 
 # nginx to build against. pinned @ 1.23 as distributed by saturn
 RUN curl -LO https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && mkdir /opt/nginx && tar -xf nginx-${NGINX_VERSION}.tar.gz --strip-components=1 -C /opt/nginx && ls /opt/nginx && rm nginx-${NGINX_VERSION}.tar.gz
@@ -20,7 +20,7 @@ RUN curl -LO https://github.com/ipld/go-car/releases/download/v2.8.0/go-car_2.8.
 # build the plugin
 COPY . .
 
-RUN cargo build -v && cargo build --release -v
+RUN cargo build -v --config net.git-fetch-with-cli=true && cargo build --release -v --config net.git-fetch-with-cli=true
 
 FROM scratch as release
 COPY --from=builder /opt/nginx-car-range/target/release/libnginx_car_range.so /libnginx_car_range.so
