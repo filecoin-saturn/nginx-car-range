@@ -1,6 +1,7 @@
 use crate::bindings::*;
-use crate::car_reader::CarFrameReader;
+use crate::car_reader::CarBufferReader;
 use crate::log::ngx_log_debug_http;
+use crate::pool::Buffer;
 use crate::request::*;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -131,7 +132,7 @@ extern "C" fn ngx_car_range_body_filter(
         None => bail!(),
     };
 
-    let cfr = match CarFrameReader::new(range, body) {
+    let cbr = match CarBufferReader::new(range, body) {
         Ok(cfr) => cfr,
         Err(e) => {
             ngx_log_debug_http!(req, "car_range: read_car: error: {}", e);
@@ -140,10 +141,28 @@ extern "C" fn ngx_car_range_body_filter(
     };
 
     let mut count = 0;
-    let mut size = cfr.header_frame().len();
-    for frame in cfr {
+    let mut size = 0;
+    let mut out: *mut ngx_chain_s = std::ptr::null_mut();
+    let mut ll = &mut out;
+
+    for mut buf in cbr {
+        size += buf.len();
         count += 1;
-        size += frame.len();
+
+        let mut cl = req.pool().alloc_chain();
+        if cl.is_null() {
+            bail!();
+        }
+        unsafe {
+            (*cl).buf = buf.as_ngx_buf_mut();
+            (*cl).next = std::ptr::null_mut();
+        }
+        *ll = cl;
+        ll = unsafe { &mut (*cl).next };
+    }
+
+    if out.is_null() {
+        bail!();
     }
 
     ngx_log_debug_http!(
@@ -153,7 +172,11 @@ extern "C" fn ngx_car_range_body_filter(
         size
     );
 
-    bail!()
+    unsafe {
+        ngx_http_next_body_filter
+            .map(|cb| cb(r, out))
+            .unwrap_or(NGX_ERROR as ngx_int_t)
+    }
 }
 
 // Prepend to filter chain
