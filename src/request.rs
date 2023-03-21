@@ -157,12 +157,9 @@ impl Request {
         if !self.0.headers_out.content_length.is_null() {
             unsafe {
                 (*self.0.headers_out.content_length).hash = 0;
+                self.0.headers_out.content_length = std::ptr::null_mut();
             }
         }
-    }
-
-    pub fn set_status(&mut self, status: ngx_uint_t) {
-        self.0.headers_out.status = status;
     }
 
     pub fn set_content_length(&mut self, n: usize) {
@@ -171,10 +168,6 @@ impl Request {
 
     pub fn set_content_type(&mut self, ct: ngx_str_t) {
         self.0.headers_out.content_type = ct;
-    }
-
-    pub fn send_header(&mut self) -> ngx_int_t {
-        unsafe { ngx_http_send_header(&mut self.0) }
     }
 }
 
