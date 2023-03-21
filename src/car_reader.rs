@@ -114,6 +114,12 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
             return None;
         }
 
+        // the cursor has moved past the desired range.
+        // iterator is done.
+        if !self.range.contains(&self.unixfs_pos) {
+            return None;
+        }
+
         let mut buf = unsafe { MemoryBuffer::from_ngx_buf((*self.buffers).buf) };
 
         self.buffers = unsafe { (*self.buffers).next };
@@ -127,6 +133,12 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
 
         while !current.is_empty() {
             let (size, read) = usize::decode_var(current)?;
+
+            // TODO: handle frames spawning multiple buffers
+            if size + read > current.len() {
+                break;
+            }
+
             let (frame, next) = &current.split_at(size + read);
             current = next;
 
@@ -251,6 +263,42 @@ mod tests {
         let chain = ngx_chain_s {
             buf: &buf as *const _ as *mut _,
             next: std::ptr::null_mut(),
+        };
+
+        let cr = CarBufferReader::new(..1024, &chain as *const _ as *mut _).unwrap();
+
+        let mut buf = vec![];
+
+        for b in cr {
+            buf.extend_from_slice(b.as_bytes());
+        }
+
+        // header + unxifs_root + raw block(1000) + raw_block(1000)
+        assert_eq!(buf.len(), 59 + 379 + 1038 + 1038);
+    }
+
+    #[test]
+    fn test_car_iter_range_multi_buffers() {
+        use crate::bindings::*;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let f = File::open("fixture.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let car_data = reader.fill_buf().unwrap();
+
+        let buf1 = to_ngx_buf(&car_data[..3000]);
+        let buf2 = to_ngx_buf(&car_data[3001..]);
+
+        let next = ngx_chain_s {
+            buf: &buf2 as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let chain = ngx_chain_s {
+            buf: &buf1 as *const _ as *mut _,
+            next: &next as *const _ as *mut _,
         };
 
         let cr = CarBufferReader::new(..1024, &chain as *const _ as *mut _).unwrap();
