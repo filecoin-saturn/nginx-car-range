@@ -153,6 +153,14 @@ impl Request {
         false
     }
 
+    pub fn set_content_length_missing(&mut self) {
+        if !self.0.headers_out.content_length.is_null() {
+            unsafe {
+                (*self.0.headers_out.content_length).hash = 0;
+            }
+        }
+    }
+
     pub fn set_status(&mut self, status: ngx_uint_t) {
         self.0.headers_out.status = status;
     }

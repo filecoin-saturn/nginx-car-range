@@ -24,6 +24,9 @@ macro_rules! ngx_string {
 pub static mut ngx_http_next_body_filter: ngx_http_output_body_filter_pt = None;
 
 #[no_mangle]
+pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
+
+#[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
     ngx_command_t {
         name: ngx_string!("car_range"), /* directive */
@@ -101,6 +104,36 @@ unsafe extern "C" fn ngx_car_range_cfg(
     _conf: *mut c_void,
 ) -> *mut c_char {
     ptr::null_mut()
+}
+
+#[no_mangle]
+extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int_t {
+    let req = unsafe { &mut Request::from_ngx_http_request(r) };
+
+    ngx_log_debug_http!(req, "http car_range header filter {}", env!("GIT_HASH"));
+
+    // call the next filter in the chain when we exit
+    macro_rules! bail {
+        () => {
+            return unsafe {
+                ngx_http_next_header_filter
+                    .map(|cb| cb(r))
+                    .unwrap_or(NGX_ERROR as ngx_int_t)
+            }
+        };
+    }
+
+    if !req.accept_car() {
+        bail!();
+    }
+
+    if req.range().is_none() {
+        bail!();
+    }
+
+    req.set_content_length_missing();
+
+    bail!()
 }
 
 #[no_mangle]
@@ -184,6 +217,9 @@ extern "C" fn ngx_car_range_body_filter(
 unsafe extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
     ngx_http_next_body_filter = ngx_http_top_body_filter;
     ngx_http_top_body_filter = Some(ngx_car_range_body_filter);
+
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
 
     return NGX_OK as ngx_int_t;
 }
