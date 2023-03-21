@@ -45,8 +45,10 @@ pub struct CarBufferReader<'a, R: RangeBounds<u64>> {
     // pointer to the nginx output buffer chain
     buffers: *mut ngx_chain_t,
     // cursor position within the unixfs file
-    pos: u64,
-    // TODO: rename. Bytes to include from a previous frame.
+    unixfs_pos: u64,
+    // cursor position within the CAR file
+    car_pos: usize,
+    // TODO: rename?. Bytes to include from a previous frame.
     offset: usize,
     // lifetime of the buffers is bound by the lifetime of the chain
     _marker: PhantomData<&'a ()>,
@@ -67,14 +69,15 @@ impl<'a, R: RangeBounds<u64>> CarBufferReader<'a, R> {
         Ok(Self {
             range,
             buffers: input,
-            pos: 0,
+            unixfs_pos: 0,
+            car_pos: 0,
             offset: size + read,
             _marker: PhantomData,
         })
     }
 
     // If codec is unixfs, advance the cursor else just return an error
-    fn consume(&mut self, cid: Cid, data: &[u8]) -> Result<()> {
+    fn consume(&mut self, cid: Cid, data: &[u8]) -> Result<u64> {
         match cid.codec() {
             0x70 => {
                 let outer = dag_pb::PbNode::decode(data).map_err(|e| format_err!("{}", e))?;
@@ -89,13 +92,12 @@ impl<'a, R: RangeBounds<u64>> CarBufferReader<'a, R> {
                 // let dt: DataType = inner.r#type.try_into().ok()?;
 
                 if outer.links.len() == 0 && inner.data.is_some() {
-                    self.pos += inner.data.as_ref().map(|d| d.len() as u64).unwrap();
-                    return Ok(());
+                    let size = inner.data.as_ref().map(|d| d.len() as u64).unwrap();
+                    return Ok(size);
                 }
             }
             0x55 => {
-                self.pos += data.len() as u64;
-                return Ok(());
+                return Ok(data.len() as u64);
             }
             _ => (),
         }
@@ -112,11 +114,14 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
             return None;
         }
 
-        let buf = unsafe { MemoryBuffer::from_ngx_buf((*self.buffers).buf) };
+        let mut buf = unsafe { MemoryBuffer::from_ngx_buf((*self.buffers).buf) };
 
         self.buffers = unsafe { (*self.buffers).next };
 
         let mut current = &buf.as_bytes()[self.offset..];
+        let lastn = self.car_pos + buf.len();
+
+        self.car_pos += self.offset;
         // reset the offset
         self.offset = 0;
 
@@ -128,15 +133,27 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
             let mut cursor = Cursor::new(&frame[read..]);
             let cid = Cid::read_bytes(&mut cursor).ok()?;
             // block data
-            let data = &frame[cursor.position() as usize..];
+            let data = &frame[read + cursor.position() as usize..];
 
             // If the blocks were consumed as unixfs chunks we check
             // whether the cursor is within the range.
-            if let Ok(()) = self.consume(cid, data) {
-                if !self.range.contains(&self.pos) {
-                    continue;
+            match self.consume(cid, data) {
+                Ok(read) => {
+                    if !self.range.contains(&self.unixfs_pos) {
+                        continue;
+                    }
+                    self.unixfs_pos += read;
                 }
+                Err(_) => {}
             }
+            self.car_pos += size + read;
+        }
+
+        let inner = buf.as_ngx_buf_mut();
+
+        unsafe {
+            let last = (*inner).last;
+            (*inner).last = last.wrapping_sub(lastn - self.car_pos);
         }
 
         Some(buf)
@@ -216,6 +233,36 @@ mod tests {
         }
 
         assert_eq!(buf, car_data.to_vec());
+    }
+
+    #[test]
+    fn test_car_iter_range() {
+        use crate::bindings::*;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let f = File::open("fixture.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let car_data = reader.fill_buf().unwrap();
+
+        let buf = to_ngx_buf(car_data);
+
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let cr = CarBufferReader::new(..1024, &chain as *const _ as *mut _).unwrap();
+
+        let mut buf = vec![];
+
+        for b in cr {
+            buf.extend_from_slice(b.as_bytes());
+        }
+
+        // header + unxifs_root + raw block(1000) + raw_block(1000)
+        assert_eq!(buf.len(), 59 + 379 + 1038 + 1038);
     }
 
     // #[test]
