@@ -161,11 +161,16 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
             self.car_pos += size + read;
         }
 
-        let inner = buf.as_ngx_buf_mut();
+        let sub = lastn - self.car_pos;
+        if sub > 0 {
+            let inner = buf.as_ngx_buf_mut();
 
-        unsafe {
-            let last = (*inner).last;
-            (*inner).last = last.wrapping_sub(lastn - self.car_pos);
+            unsafe {
+                let last = (*inner).last;
+                (*inner).last = last.wrapping_sub(sub);
+            }
+            buf.set_last_buf(true);
+            buf.set_last_in_chain(true);
         }
 
         Some(buf)
