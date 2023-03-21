@@ -117,6 +117,11 @@ impl<'a, R: RangeBounds<u64>> Iterator for CarBufferReader<'a, R> {
         // the cursor has moved past the desired range.
         // iterator is done.
         if !self.range.contains(&self.unixfs_pos) {
+            // skip the next buffers
+            while !self.buffers.is_null() {
+                unsafe { (*(*self.buffers).buf).pos = (*(*self.buffers).buf).last };
+                self.buffers = unsafe { (*self.buffers).next };
+            }
             return None;
         }
 
