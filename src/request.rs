@@ -156,6 +156,7 @@ impl Request {
     pub fn set_content_length_missing(&mut self) {
         if !self.0.headers_out.content_length.is_null() {
             unsafe {
+                self.0.headers_out.content_length_n = -1 as off_t;
                 (*self.0.headers_out.content_length).hash = 0;
                 self.0.headers_out.content_length = std::ptr::null_mut();
             }
