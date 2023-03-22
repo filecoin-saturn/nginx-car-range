@@ -160,8 +160,8 @@ impl Request {
                 (*self.0.headers_out.content_length).hash = 0;
                 (*self.0.headers_out.content_length).next = std::ptr::null_mut();
             }
+            self.0.headers_out.content_length = std::ptr::null_mut();
         }
-        self.0.headers_out.content_length = std::ptr::null_mut();
     }
 
     pub fn set_content_length(&mut self, n: usize) {
