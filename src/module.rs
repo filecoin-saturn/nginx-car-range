@@ -1,6 +1,7 @@
 use crate::bindings::*;
-use crate::car_reader::CarFrameReader;
+use crate::car_reader::CarBufferReader;
 use crate::log::ngx_log_debug_http;
+use crate::pool::Buffer;
 use crate::request::*;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -21,6 +22,9 @@ macro_rules! ngx_string {
 
 #[no_mangle]
 pub static mut ngx_http_next_body_filter: ngx_http_output_body_filter_pt = None;
+
+#[no_mangle]
+pub static mut ngx_http_next_header_filter: ngx_http_output_header_filter_pt = None;
 
 #[no_mangle]
 static mut ngx_car_range_commands: [ngx_command_t; 2] = [
@@ -103,6 +107,37 @@ unsafe extern "C" fn ngx_car_range_cfg(
 }
 
 #[no_mangle]
+extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int_t {
+    let req = unsafe { &mut Request::from_ngx_http_request(r) };
+
+    ngx_log_debug_http!(req, "http car_range header filter {}", env!("GIT_HASH"));
+
+    // call the next filter in the chain when we exit
+    macro_rules! bail {
+        () => {
+            return unsafe {
+                ngx_http_next_header_filter
+                    .map(|cb| cb(r))
+                    .unwrap_or(NGX_ERROR as ngx_int_t)
+            }
+        };
+    }
+
+    if !req.accept_car() {
+        bail!();
+    }
+
+    if req.range().is_none() {
+        bail!();
+    }
+
+    req.set_content_length_missing();
+    req.set_content_type(ngx_string!("application/vnd.ipld.car; version=1"));
+
+    bail!()
+}
+
+#[no_mangle]
 extern "C" fn ngx_car_range_body_filter(
     r: *mut ngx_http_request_t,
     body: *mut ngx_chain_t,
@@ -131,7 +166,7 @@ extern "C" fn ngx_car_range_body_filter(
         None => bail!(),
     };
 
-    let cfr = match CarFrameReader::new(range, body) {
+    let cbr = match CarBufferReader::new(range, body) {
         Ok(cfr) => cfr,
         Err(e) => {
             ngx_log_debug_http!(req, "car_range: read_car: error: {}", e);
@@ -139,10 +174,43 @@ extern "C" fn ngx_car_range_body_filter(
         }
     };
 
-    let count = cfr.count();
-    ngx_log_debug_http!(req, "car_range: read {} blocks", count);
+    let mut count = 0;
+    let mut size = 0;
+    let mut out: *mut ngx_chain_s = std::ptr::null_mut();
+    let mut ll = &mut out;
 
-    bail!()
+    for mut buf in cbr {
+        size += buf.len();
+        count += 1;
+
+        let mut cl = req.pool().alloc_chain();
+        if cl.is_null() {
+            bail!();
+        }
+        unsafe {
+            (*cl).buf = buf.as_ngx_buf_mut();
+            (*cl).next = std::ptr::null_mut();
+        }
+        *ll = cl;
+        ll = unsafe { &mut (*cl).next };
+    }
+
+    if out.is_null() {
+        bail!();
+    }
+
+    ngx_log_debug_http!(
+        req,
+        "car_range: read {} blocks, total size: {}",
+        count,
+        size
+    );
+
+    unsafe {
+        ngx_http_next_body_filter
+            .map(|cb| cb(r, out))
+            .unwrap_or(NGX_ERROR as ngx_int_t)
+    }
 }
 
 // Prepend to filter chain
@@ -150,6 +218,9 @@ extern "C" fn ngx_car_range_body_filter(
 unsafe extern "C" fn ngx_car_range_filter_init(_: *mut ngx_conf_t) -> ngx_int_t {
     ngx_http_next_body_filter = ngx_http_top_body_filter;
     ngx_http_top_body_filter = Some(ngx_car_range_body_filter);
+
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = Some(ngx_car_range_header_filter);
 
     return NGX_OK as ngx_int_t;
 }

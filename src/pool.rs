@@ -37,6 +37,10 @@ impl Pool {
             p
         }
     }
+
+    pub fn alloc_chain(&mut self) -> *mut ngx_chain_t {
+        unsafe { ngx_alloc_chain_link(self.0) }
+    }
 }
 
 unsafe extern "C" fn cleanup_type<T>(data: *mut c_void) {
