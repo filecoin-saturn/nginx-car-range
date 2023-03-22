@@ -154,20 +154,14 @@ impl Request {
     }
 
     pub fn set_content_length_missing(&mut self) {
+        self.0.headers_out.content_length_n = -1 as off_t;
         if !self.0.headers_out.content_length.is_null() {
             unsafe {
-                self.0.headers_out.content_length_n = -1 as off_t;
                 (*self.0.headers_out.content_length).hash = 0;
                 (*self.0.headers_out.content_length).next = std::ptr::null_mut();
-                self.0.headers_out.content_length = std::ptr::null_mut();
             }
         }
-        if !self.0.headers_out.accept_ranges.is_null() {
-            unsafe {
-                (*self.0.headers_out.accept_ranges).hash = 0;
-                (*self.0.headers_out.accept_ranges).next = std::ptr::null_mut();
-            }
-        }
+        self.0.headers_out.content_length = std::ptr::null_mut();
     }
 
     pub fn set_content_length(&mut self, n: usize) {

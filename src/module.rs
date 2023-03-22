@@ -131,11 +131,14 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
         bail!();
     }
 
-    if !req.0.headers_out.content_length.is_null() {
-        ngx_log_debug_http!(req, "http car_range header filter has content_length");
-    }
-
     req.set_content_length_missing();
+
+    ngx_log_debug_http!(
+        req,
+        "http car_range content_length: {}, hash: {}",
+        req.0.headers_out.content_length_n,
+        unsafe { (*req.0.headers_out.content_length).hash },
+    );
     req.set_content_type(ngx_string!("application/vnd.ipld.car; version=1"));
 
     bail!()
