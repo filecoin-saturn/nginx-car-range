@@ -132,7 +132,7 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
         None => bail!(),
     };
 
-    let ctx = req.pool().allocate(CarBufferContext::new(range)) as *mut c_void;
+    let ctx = req.pool().allocate(CarBufferContext::new(range, req)) as *mut c_void;
     unsafe {
         req.set_context(&ngx_car_range_module, ctx);
     }
@@ -174,13 +174,6 @@ extern "C" fn ngx_car_range_body_filter(
 
     unsafe {
         let out = (*ctx).buffer(body);
-
-        ngx_log_debug_http!(
-            req,
-            "car_range: read {} blocks, total size: {}",
-            (*ctx).count,
-            (*ctx).size
-        );
 
         ngx_http_next_body_filter
             .map(|cb| cb(r, out))

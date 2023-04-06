@@ -1,5 +1,7 @@
 use crate::bindings::*;
+use crate::log::ngx_log_debug_http;
 use crate::pool::{Buffer, MemoryBuffer};
+use crate::request::Request;
 use crate::varint::VarInt;
 use anyhow::{format_err, Result};
 use cid::Cid;
@@ -54,16 +56,18 @@ pub enum DataType {
     HamtShard = 5,
 }
 
-pub struct CarBufferContext<R: RangeBounds<u64>> {
+pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
     range: R,
+    request: &'a mut Request,
     pub size: usize,
     pub count: usize,
 }
 
-impl<R: RangeBounds<u64>> CarBufferContext<R> {
-    pub fn new(range: R) -> Self {
+impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
+    pub fn new(range: R, request: &'a mut Request) -> Self {
         Self {
             range,
+            request,
             size: 0,
             count: 0,
         }
@@ -75,7 +79,21 @@ impl<R: RangeBounds<u64>> CarBufferContext<R> {
             out = unsafe { (*out).next };
 
             self.count += 1;
-            self.size += buf.len();
+            let start = self.size;
+            let end = buf.len();
+            self.size += end;
+
+            let bstart = unsafe { (*buf.as_ngx_buf()).start as usize };
+            let bend = unsafe { (*buf.as_ngx_buf()).end as usize };
+
+            ngx_log_debug_http!(
+                self.request,
+                "car_range reading buffer: start: {}, end: {}, bstart: {}, bend: {}",
+                start,
+                end,
+                bstart,
+                bend,
+            );
         }
         input
     }
