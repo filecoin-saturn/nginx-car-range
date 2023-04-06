@@ -17,6 +17,9 @@ RUN curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v22.1
 # car pinned @2.8.0
 RUN curl -LO https://github.com/ipld/go-car/releases/download/v2.8.0/go-car_2.8.0_linux_amd64.tar.gz && tar xzf go-car_2.8.0_linux_amd64.tar.gz
 
+# download CAR fixture
+RUN curl https://ipfs.io/ipfs/bafybeig4rhvdmqu52hho5clhmhq5q4vsefklxcrai4feauy45voowh4awm/jungle_world.mp4?format=car > /usr/local/nginx/html/fixture.car 
+
 # build the plugin
 COPY . .
 
@@ -34,7 +37,6 @@ COPY --from=builder /usr/local/nginx /usr/local/nginx
 COPY --from=builder /opt/nginx-car-range/target/debug/libnginx_car_range.so /usr/local/lib/libnginx_car_range.so
 COPY --from=builder /opt/nginx-car-range/car /usr/local/bin/car
 
-COPY fixture.car /usr/local/nginx/html/fixture.car
 COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY ci.sh /ci.sh
 RUN chmod u+rwx /ci.sh
