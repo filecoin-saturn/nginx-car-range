@@ -62,6 +62,14 @@ impl Request {
         parse_range(args)
     }
 
+    pub fn get_context(&self, module: &ngx_module_t) -> *mut std::os::raw::c_void {
+        unsafe { *self.0.ctx.add(module.ctx_index) }
+    }
+
+    pub fn set_context(&self, module: &ngx_module_t, ctx: *mut std::os::raw::c_void) {
+        unsafe { *self.0.ctx.add(module.ctx_index) = ctx }
+    }
+
     pub fn accept_car(&self) -> bool {
         // Headers is a ngx list which is a sequence of arrays:
         // struct ngx_list_t {

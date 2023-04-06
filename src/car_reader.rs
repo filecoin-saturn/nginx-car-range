@@ -54,6 +54,33 @@ pub enum DataType {
     HamtShard = 5,
 }
 
+pub struct CarBufferContext<R: RangeBounds<u64>> {
+    range: R,
+    pub size: usize,
+    pub count: usize,
+}
+
+impl<R: RangeBounds<u64>> CarBufferContext<R> {
+    pub fn new(range: R) -> Self {
+        Self {
+            range,
+            size: 0,
+            count: 0,
+        }
+    }
+    pub fn buffer(&mut self, input: *mut ngx_chain_t) -> *mut ngx_chain_t {
+        let mut out = input;
+        while !out.is_null() {
+            let buf = unsafe { MemoryBuffer::from_ngx_buf((*out).buf) };
+            out = unsafe { (*out).next };
+
+            self.count += 1;
+            self.size += buf.len();
+        }
+        input
+    }
+}
+
 /// CarBufferReader is an iteraror returning nginx buffers ready to be inserted in an output chain
 pub struct CarBufferReader<'a, R: RangeBounds<u64>> {
     // byte range to be selected in a unixfs file
