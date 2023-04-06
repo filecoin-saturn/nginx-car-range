@@ -164,10 +164,6 @@ impl Request {
         }
     }
 
-    pub fn set_content_length(&mut self, n: usize) {
-        self.0.headers_out.content_length_n = n as off_t;
-    }
-
     pub fn set_content_type(&mut self, ct: ngx_str_t) {
         self.0.headers_out.content_type = ct;
     }
