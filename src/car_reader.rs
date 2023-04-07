@@ -61,15 +61,20 @@ pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
     request: &'a mut Request,
     pub size: usize,
     pub count: usize,
+    offset: usize,
+    unixfs_pos: usize,
 }
 
 impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
+    // might be best to pass the request object in the buffer fn each time?
     pub fn new(range: R, request: &'a mut Request) -> Self {
         Self {
             range,
             request,
+            offset: 0,
             size: 0,
             count: 0,
+            unixfs_pos: 0,
         }
     }
     pub fn buffer(&mut self, input: *mut ngx_chain_t) -> *mut ngx_chain_t {
@@ -78,21 +83,68 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             let buf = unsafe { MemoryBuffer::from_ngx_buf((*out).buf) };
             out = unsafe { (*out).next };
 
-            self.count += 1;
-            let start = self.size;
-            let end = buf.len();
-            self.size += end;
+            let mut current = buf.as_bytes();
+            self.size += current.len();
 
-            let bstart = unsafe { (*buf.as_ngx_buf()).start as usize };
-            let bend = unsafe { (*buf.as_ngx_buf()).end as usize };
+            if self.offset > current.len() {
+                self.offset -= current.len();
+                continue;
+            }
+
+            current = &current[self.offset..];
+            self.offset = 0;
+
+            while !current.is_empty() {
+                let (size, read) = match usize::decode_var(current) {
+                    Some(var) => var,
+                    None => {
+                        continue;
+                    }
+                };
+
+                let frame_size = size + read;
+
+                let split = if frame_size <= current.len() {
+                    frame_size
+                } else {
+                    self.offset = frame_size - current.len();
+                    current.len()
+                };
+
+                let (frame, next) = current.split_at(split);
+                current = next;
+
+                if self.size == 0 {
+                    // CAR header can be skipped
+                    continue;
+                }
+
+                let mut reader = Cursor::new(&frame[read..]);
+                let cid = match Cid::read_bytes(&mut reader) {
+                    Ok(cid) => cid,
+                    // TODO: if CID is across 2 buffers we need some buffering
+                    Err(_) => continue,
+                };
+                match cid.codec() {
+                    0x70 => {
+                        // TODO: what to do for unixfs Data nodes?
+                        // prob need some buffering...
+                    }
+                    0x55 => {
+                        self.unixfs_pos += frame.len() - (read + reader.position() as usize);
+                    }
+                    _ => {}
+                };
+            }
+
+            self.count += 1;
 
             ngx_log_debug_http!(
                 self.request,
-                "car_range reading buffer: start: {}, end: {}, bstart: {}, bend: {}",
-                start,
-                end,
-                bstart,
-                bend,
+                "car_range reading buffer: size: {}, total read: {}, unixfs pos: {}",
+                buf.len(),
+                self.size,
+                self.unixfs_pos,
             );
         }
         input
