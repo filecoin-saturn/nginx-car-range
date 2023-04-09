@@ -71,6 +71,11 @@ pub trait Buffer<'a> {
         self.len() == 0
     }
 
+    fn is_last(&self) -> bool {
+        let buf = self.as_ngx_buf();
+        unsafe { (*buf).last_buf() == 1 }
+    }
+
     fn set_last_buf(&mut self, last: bool) {
         let buf = self.as_ngx_buf_mut();
         unsafe {
