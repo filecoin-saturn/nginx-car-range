@@ -20,6 +20,8 @@ RUN curl -LO https://github.com/ipld/go-car/releases/download/v2.8.0/go-car_2.8.
 # download CAR fixture
 RUN curl https://ipfs.io/ipfs/bafybeig4rhvdmqu52hho5clhmhq5q4vsefklxcrai4feauy45voowh4awm/jungle_world.mp4?format=car > /usr/local/nginx/html/fixture.car 
 
+RUN curl https://ipfs.io/ipfs/bafybeifpz6onienrgwvb3mw5rg7piq5jh63ystjn7s5wk6ttezy2gy5xwu/Mexico.JPG?format=car > /usr/local/nginx/html/midfixture.car
+
 # build the plugin
 COPY . .
 

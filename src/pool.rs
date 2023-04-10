@@ -71,6 +71,11 @@ pub trait Buffer<'a> {
         self.len() == 0
     }
 
+    fn is_last(&self) -> bool {
+        let buf = self.as_ngx_buf();
+        unsafe { (*buf).last_buf() == 1 }
+    }
+
     fn set_last_buf(&mut self, last: bool) {
         let buf = self.as_ngx_buf_mut();
         unsafe {
@@ -82,6 +87,17 @@ pub trait Buffer<'a> {
         let buf = self.as_ngx_buf_mut();
         unsafe {
             (*buf).set_last_in_chain(if last { 1 } else { 0 });
+        }
+    }
+
+    fn set_empty(&mut self) {
+        let buf = self.as_ngx_buf_mut();
+        unsafe {
+            if (*buf).in_file() == 1 {
+                (*buf).file_pos = (*buf).file_last;
+            }
+            (*buf).pos = (*buf).last;
+            (*buf).set_sync(1);
         }
     }
 }

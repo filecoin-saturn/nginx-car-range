@@ -1,8 +1,8 @@
 use crate::bindings::*;
-use crate::car_reader::CarBufferReader;
+use crate::car_reader::CarBufferContext;
 use crate::log::ngx_log_debug_http;
-use crate::pool::Buffer;
 use crate::request::*;
+use std::ops::Bound;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 
@@ -127,9 +127,16 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
         bail!();
     }
 
-    if req.range().is_none() {
-        bail!();
+    let range = match req.range() {
+        Some(range) => range,
+        None => bail!(),
+    };
+
+    let ctx = req.pool().allocate(CarBufferContext::new(range)) as *mut c_void;
+    unsafe {
+        req.set_context(&ngx_car_range_module, ctx);
     }
+    ngx_log_debug_http!(req, "car_range header filter set context");
 
     req.set_content_length_missing();
     req.set_content_type(ngx_string!("application/vnd.ipld.car; version=1"));
@@ -149,64 +156,25 @@ extern "C" fn ngx_car_range_body_filter(
     // call the next filter in the chain when we exit
     macro_rules! bail {
         () => {
-            return unsafe {
-                ngx_http_next_body_filter
-                    .map(|cb| cb(r, body))
-                    .unwrap_or(NGX_ERROR as ngx_int_t)
-            }
+            return ngx_http_next_body_filter
+                .map(|cb| cb(r, body))
+                .unwrap_or(NGX_ERROR as ngx_int_t)
         };
     }
 
-    if !req.accept_car() {
-        bail!();
-    }
-
-    let range = match req.range() {
-        Some(range) => range,
-        None => bail!(),
-    };
-
-    let cbr = match CarBufferReader::new(range, body) {
-        Ok(cfr) => cfr,
-        Err(e) => {
-            ngx_log_debug_http!(req, "car_range: read_car: error: {}", e);
+    let ctx = unsafe {
+        let cbc = req.get_context(&ngx_car_range_module)
+            as *mut CarBufferContext<(Bound<u64>, Bound<u64>)>;
+        if cbc.is_null() {
+            ngx_log_debug_http!(req, "car_range body filter: no ctx: skipping");
             bail!();
         }
+        cbc
     };
-
-    let mut count = 0;
-    let mut size = 0;
-    let mut out: *mut ngx_chain_s = std::ptr::null_mut();
-    let mut ll = &mut out;
-
-    for mut buf in cbr {
-        size += buf.len();
-        count += 1;
-
-        let mut cl = req.pool().alloc_chain();
-        if cl.is_null() {
-            bail!();
-        }
-        unsafe {
-            (*cl).buf = buf.as_ngx_buf_mut();
-            (*cl).next = std::ptr::null_mut();
-        }
-        *ll = cl;
-        ll = unsafe { &mut (*cl).next };
-    }
-
-    if out.is_null() {
-        bail!();
-    }
-
-    ngx_log_debug_http!(
-        req,
-        "car_range: read {} blocks, total size: {}",
-        count,
-        size
-    );
 
     unsafe {
+        let out = (*ctx).buffer(body, || req.pool().alloc_chain());
+
         ngx_http_next_body_filter
             .map(|cb| cb(r, out))
             .unwrap_or(NGX_ERROR as ngx_int_t)
