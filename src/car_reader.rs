@@ -1,10 +1,9 @@
 use crate::bindings::*;
 use crate::pool::{Buffer, MemoryBuffer};
 use crate::varint::VarInt;
-use anyhow::{format_err, Result};
 use cid::Cid;
 use core2::io::Cursor;
-use prost::Message;
+// use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::{Bound, RangeBounds};
@@ -21,14 +20,6 @@ fn lt_bound(bound: Bound<&u64>, val: u64) -> bool {
     match bound {
         Bound::Included(&b) => b >= val,
         Bound::Excluded(&b) => b > val,
-        Bound::Unbounded => false,
-    }
-}
-
-fn gt_bound(bound: Bound<&u64>, val: u64) -> bool {
-    match bound {
-        Bound::Included(&b) => b <= val,
-        Bound::Excluded(&b) => b < val,
         Bound::Unbounded => false,
     }
 }
@@ -113,11 +104,6 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     } else {
                         0
                     };
-
-                    println!(
-                        "append buf: frame_pos {}, start {}, end {}, unixfs_pos {}",
-                        pos, start, self.size, self.unixfs_pos,
-                    );
 
                     if skip == buf.len() {
                         buf.set_empty();
@@ -206,11 +192,6 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                 };
 
                 let frame_size = size + read;
-
-                println!(
-                    "frame_size {}, frame_pos {}, unixfs_pos {}, size {}",
-                    frame_size, pos, self.unixfs_pos, self.size
-                );
 
                 let split = if frame_size <= current.len() {
                     frame_size
@@ -714,6 +695,80 @@ mod tests {
         buf.extend_from_slice(b.as_bytes());
 
         let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
+
+        assert!(b.is_last());
+
+        buf.extend_from_slice(b.as_bytes());
+
+        // header + unxifs_root + raw_block(1000) + raw_block(157)
+        assert_eq!(buf.len(), 59 + 379 + 1038 + 157);
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn test_range_skip_start_shorter_buffers() {
+        use crate::bindings::*;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let f = File::open("fixture.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let car_data = reader.fill_buf().unwrap();
+
+        let buf1 = to_ngx_buf(&car_data[..2614]);
+        let buf2 = to_ngx_buf(&car_data[2614..3100]);
+        let mut buf3 = to_ngx_buf(&car_data[3100..]);
+        buf3.set_last_buf(1);
+
+        let mut expected = vec![];
+        expected.extend_from_slice(&car_data[..438]);
+        expected.extend_from_slice(&car_data[5628..]);
+
+        let l3 = ngx_chain_s {
+            buf: &buf3 as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let l2 = ngx_chain_s {
+            buf: &buf2 as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let l1 = ngx_chain_s {
+            buf: &buf1 as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let mut ctx = CarBufferContext::new(5500..);
+
+        let mut buf = vec![];
+
+        let cl1 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl2 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl3 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+
+        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
+
+        buf.extend_from_slice(b.as_bytes());
+
+        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        assert!(o.is_null());
+        let b = MemoryBuffer::from_ngx_buf(l2.buf);
+        assert!(b.is_empty());
+
+        let o = ctx.buffer(&l3 as *const _ as *mut _, || &cl3 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
