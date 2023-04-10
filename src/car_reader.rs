@@ -120,6 +120,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     );
 
                     if skip == buf.len() {
+                        buf.set_empty();
                         continue;
                     }
 
@@ -169,6 +170,13 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                 if self.last_codec == 0x55 {
                     self.unixfs_pos += current.len();
                 }
+
+                if lt_bound(self.range.start_bound(), self.unixfs_pos as u64) {
+                    skip += current.len();
+                } else {
+                    pos += current.len();
+                }
+
                 self.offset -= current.len();
 
                 append_buf!();
@@ -643,6 +651,8 @@ mod tests {
 
         let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
         assert!(o.is_null());
+        let b = MemoryBuffer::from_ngx_buf(l2.buf);
+        assert!(b.is_empty());
 
         let o = ctx.buffer(&l3 as *const _ as *mut _, || &cl3 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
