@@ -26,7 +26,7 @@ pub static mut ngx_module_names: [*const c_char; 2] =
     ["car_range\0".as_ptr() as *const c_char, ptr::null()];
 
 #[no_mangle]
-pub static mut ngx_module_order: [*const c_char; 32] = [
+pub static mut ngx_module_order: [*const c_char; 31] = [
     "car_range\0".as_ptr() as *const c_char,
     "ngx_http_brotli_static_module\0".as_ptr() as *const c_char,
     "ngx_http_static_module\0".as_ptr() as *const c_char,
