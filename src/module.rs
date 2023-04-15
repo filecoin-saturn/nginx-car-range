@@ -140,7 +140,6 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
     ngx_log_debug_http!(req, "car_range header filter set context");
 
     req.set_content_length_missing();
-    req.set_content_type(ngx_string!("application/vnd.ipld.car; version=1"));
 
     bail!()
 }
