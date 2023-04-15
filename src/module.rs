@@ -146,26 +146,15 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
 
 fn log_buf_info(r: &mut Request, chain: *mut ngx_chain_t, tag: &str) {
     let mut cl = chain;
-    let mut count = 0;
-    let mut total = 0;
     while !cl.is_null() {
-        count += 1;
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
         cl = unsafe { (*cl).next };
 
-        total += buf.len();
+        ngx_log_debug_http!(r, "car_range {} buf chain: size {}", tag, buf.len());
     }
 
     if chain.is_null() {
         ngx_log_debug_http!(r, "car_range {} null chain", tag);
-    } else {
-        ngx_log_debug_http!(
-            r,
-            "car_range {} buf chain: count {}, total size {}",
-            tag,
-            count,
-            total
-        );
     }
 }
 
