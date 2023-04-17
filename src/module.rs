@@ -150,19 +150,7 @@ fn log_buf_info(r: &mut Request, chain: *mut ngx_chain_t, tag: &str) {
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
         cl = unsafe { (*cl).next };
 
-        let bytes = if buf.len() < 256 {
-            hex::encode(buf.as_bytes())
-        } else {
-            String::new()
-        };
-
-        ngx_log_debug_http!(
-            r,
-            "car_range {} buf chain: size {}, bytes {}",
-            tag,
-            buf.len(),
-            bytes
-        );
+        ngx_log_debug_http!(r, "car_range {} buf chain: size {}", tag, buf.len(),);
     }
 
     if chain.is_null() {
