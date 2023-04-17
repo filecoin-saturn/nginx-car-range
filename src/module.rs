@@ -193,7 +193,12 @@ extern "C" fn ngx_car_range_body_filter(
 
         log_buf_info(req, body, "output");
 
-        ngx_log_debug_http!(req, "car_range size {}", (*ctx).size);
+        ngx_log_debug_http!(
+            req,
+            "car_range size {}, unixfs pos {}",
+            (*ctx).size,
+            (*ctx).unixfs_pos
+        );
 
         ngx_http_next_body_filter
             .map(|cb| cb(r, out))
