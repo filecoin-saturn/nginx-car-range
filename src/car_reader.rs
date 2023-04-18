@@ -119,9 +119,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         // set as last.
                         Bound::Unbounded => false,
                     };
-                    let is_seek = lt_bound(self.range.start_bound(), self.unixfs_pos as u64);
-
-                    if sub > 0 && !is_seek || is_last {
+                    if sub > 0 && !self.is_seek() || is_last {
                         self.done = 1;
                         buf.set_last_buf(true);
                     }
@@ -182,7 +180,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             }
 
             // if the current frame extends beyond the buffer size
-            if self.offset > current.len() {
+            if self.offset >= current.len() {
                 match self.last_codec {
                     0x70 => {
                         pos += current.len();
@@ -190,8 +188,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     // currently reading partial chunks from a unixfs raw leaf
                     0x55 => {
                         self.unixfs_pos += current.len();
-
-                        if lt_bound(self.range.start_bound(), self.unixfs_pos as u64) {
+                        if self.is_seek() {
                             skip += current.len();
                         } else {
                             pos += current.len();
@@ -217,9 +214,10 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     }
                     0x55 => {
                         self.unixfs_pos += self.offset;
-                        if lt_bound(self.range.start_bound(), self.unixfs_pos as u64) {
+                        if self.is_seek() {
                             skip += self.offset;
                         } else {
+                            // if we have an offset and it's not seeking it's to include it
                             pos += self.offset;
                         }
                     }
@@ -280,15 +278,14 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     }
                     0x55 => {
                         let unixfs_size = frame.len() - (read + reader.position() as usize);
-                        let is_seek = lt_bound(self.range.start_bound(), self.unixfs_pos as u64);
-                        if is_seek
+                        if self.is_seek()
                             && self
                                 .range
                                 .contains(&((self.unixfs_pos + unixfs_size) as u64))
                             || self.range.contains(&(self.unixfs_pos as u64))
                         {
                             pos += frame.len();
-                        } else if is_seek && pos == start {
+                        } else if self.is_seek() && pos == start {
                             skip += frame.len();
                         }
                         self.unixfs_pos += unixfs_size;
@@ -306,6 +303,10 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
         }
 
         out
+    }
+
+    fn is_seek(&self) -> bool {
+        lt_bound(self.range.start_bound(), self.unixfs_pos as u64)
     }
 }
 
