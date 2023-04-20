@@ -133,8 +133,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         (*cl).next = std::ptr::null_mut();
 
                         if sub > 0 {
-                            let last = (*(*cl).buf).last;
-                            (*(*cl).buf).last = last.wrapping_sub(sub);
+                            ngx_buf_remove_end((*cl).buf, sub);
                         }
 
                         if skip > 0 {
@@ -159,7 +158,12 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                 } else {
                     avail
                 };
-                self.buf.extend_from_slice(&current[..eb]);
+                // efficiently append the current buffer to self.buf until the capacity is reached
+                unsafe {
+                    let ptr = self.buf.as_mut_ptr().add(self.buf.len());
+                    std::ptr::copy_nonoverlapping(current.as_ptr(), ptr, eb);
+                    self.buf.set_len(self.buf.len() + eb);
+                }
 
                 // attempt at reading a CID from buffered data
                 let mut reader = Cursor::new(&self.buf[..]);
@@ -178,27 +182,33 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     }
                 };
             }
+            // a macro to advance the skip or pos values based on a given size and last_codec
+            macro_rules! advance {
+                ($size:expr) => {
+                    match self.last_codec {
+                        0x70 => {
+                            pos += $size;
+                        }
+                        0x55 => {
+                            self.unixfs_pos += $size;
+                            if self.is_seek() {
+                                skip += $size;
+                            } else {
+                                pos += $size;
+                            }
+                        }
+                        0 => {}
+                        _ => {
+                            pos += $size;
+                        }
+                    };
+                };
+            }
 
             // if the current frame extends beyond the buffer size
             if self.offset >= current.len() {
-                match self.last_codec {
-                    0x70 => {
-                        pos += current.len();
-                    }
-                    // currently reading partial chunks from a unixfs raw leaf
-                    0x55 => {
-                        self.unixfs_pos += current.len();
-                        if self.is_seek() {
-                            skip += current.len();
-                        } else {
-                            pos += current.len();
-                        }
-                    }
-                    0 => {}
-                    _ => {
-                        pos += current.len();
-                    }
-                };
+                // use the advance macro based on current.len()
+                advance!(current.len());
 
                 self.offset -= current.len();
 
@@ -208,25 +218,9 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 
             // if the current frame ends within this buffer
             if self.offset > 0 {
-                match self.last_codec {
-                    0x70 => {
-                        pos += self.offset;
-                    }
-                    0x55 => {
-                        self.unixfs_pos += self.offset;
-                        if self.is_seek() {
-                            skip += self.offset;
-                        } else {
-                            // if we have an offset and it's not seeking it's to include it
-                            pos += self.offset;
-                        }
-                    }
-                    // buffering
-                    0 => {}
-                    _ => {
-                        pos += self.offset;
-                    }
-                };
+                // use the advance macro based on self.offset
+                advance!(self.offset);
+
                 current = &current[self.offset..];
                 self.offset = 0;
             }
@@ -265,7 +259,12 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     Ok(cid) => cid,
                     // If CID is across 2 buffers we need some buffering
                     Err(_) => {
-                        self.buf.extend_from_slice(&frame[read..]);
+                        let mut i = read;
+                        while i < frame.len() {
+                            self.buf.push(frame[i]);
+                            i += 1;
+                        }
+
                         continue;
                     }
                 };
@@ -307,6 +306,15 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 
     fn is_seek(&self) -> bool {
         lt_bound(self.range.start_bound(), self.unixfs_pos as u64)
+    }
+}
+
+// a function to remove bytes at the end of a ngx_buf_s mutable pointer
+fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
+    // assert that the buffer is not null
+    assert!(!buf.is_null());
+    unsafe {
+        (*buf).last = (*buf).last.sub(len);
     }
 }
 
@@ -961,6 +969,15 @@ mod tests {
         }
 
         assert_eq!(result, exp);
+    }
+
+    // verify that ngx_buf_remove_end can remove 24 bytes at the end of a 1kb buffer
+    #[test]
+    fn test_buf_remove_end() {
+        let mut buf = to_ngx_buf(&vec![0u8; 1024][..]);
+        let mut buf = MemoryBuffer::from_ngx_buf(&mut buf);
+        ngx_buf_remove_end(buf.as_ngx_buf_mut(), 24);
+        assert_eq!(buf.len(), 1000);
     }
 
     // #[test]
