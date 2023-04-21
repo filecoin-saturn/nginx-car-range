@@ -105,6 +105,23 @@ pub trait Buffer<'a> {
         let buf = self.as_ngx_buf();
         unsafe { (*buf).in_file() == 1 }
     }
+
+    // a method to return a slice of bytes if the buffer is a file
+    fn as_file_bytes(&self) -> Option<&'a [u8]> {
+        let buf = self.as_ngx_buf();
+        unsafe {
+            if (*buf).in_file() == 1 {
+                let start = (*buf).file_pos as usize;
+                let end = (*buf).file_last as usize;
+                Some(std::slice::from_raw_parts(
+                    (*(*buf).file).fd as *const u8,
+                    end - start,
+                ))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 pub struct MemoryBuffer<'a> {

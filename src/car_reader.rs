@@ -145,7 +145,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                 };
             }
 
-            let mut current = buf.as_bytes();
+            let mut current = buf.as_file_bytes().unwrap_or_else(|| buf.as_bytes());
             self.size += current.len();
 
             // if last_code == 0, there was not enough data in the last buffer to read the CID
@@ -312,8 +312,15 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
     // assert that the buffer is not null
     assert!(!buf.is_null());
-    unsafe {
-        (*buf).last = (*buf).last.sub(len);
+    // check if the buffer is a file and remove accordingly
+    if unsafe { (*buf).file.is_null() } {
+        unsafe {
+            (*buf).end = (*buf).end.sub(len);
+        }
+    } else {
+        unsafe {
+            (*buf).file_last = (*buf).file_last - (len as off_t);
+        }
     }
 }
 
