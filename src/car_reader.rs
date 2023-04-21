@@ -315,7 +315,7 @@ fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
     // check if the buffer is a file and remove accordingly
     if unsafe { (*buf).file.is_null() } {
         unsafe {
-            (*buf).end = (*buf).end.sub(len);
+            (*buf).last = (*buf).last.sub(len);
         }
     } else {
         unsafe {
