@@ -150,7 +150,13 @@ fn log_buf_info(r: &mut Request, chain: *mut ngx_chain_t, tag: &str) {
         let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
         cl = unsafe { (*cl).next };
 
-        ngx_log_debug_http!(r, "car_range {} buf chain: size {}", tag, buf.len(),);
+        ngx_log_debug_http!(
+            r,
+            "car_range {} buf chain: size {}, last {}",
+            tag,
+            buf.len(),
+            buf.is_last()
+        );
     }
 
     if chain.is_null() {
@@ -191,7 +197,7 @@ extern "C" fn ngx_car_range_body_filter(
     unsafe {
         let out = (*ctx).buffer(body, || req.pool().alloc_chain());
 
-        log_buf_info(req, body, "output");
+        log_buf_info(req, out, "output");
 
         ngx_log_debug_http!(
             req,

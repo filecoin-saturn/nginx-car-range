@@ -981,6 +981,28 @@ mod tests {
         assert_eq!(buf.len(), 1000);
     }
 
+    // test CarBufferContext::buffer against a chain of 1 empty buffer
+    // and an unbounded range
+    #[test]
+    fn test_buf_filter_chain_empty() {
+        let buf = to_ngx_buf(&vec![0u8; 0][..]);
+        // check that the buffer is empty
+        assert_eq!(buf.last, buf.pos);
+
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let mut ctx = CarBufferContext::new(..);
+
+        let o = ctx.buffer(&chain as *const _ as *mut _, || {
+            panic!("should not be called");
+        });
+
+        assert!(o.is_null());
+    }
+
     // #[test]
     // fn test_buf_filter_chain() {
     //     let data: Vec<&str> = "Mary had a little lamb".split(' ').collect();
