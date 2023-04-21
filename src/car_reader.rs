@@ -47,7 +47,6 @@ pub enum DataType {
 
 pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
     range: R,
-    // request: &'a mut Request,
     pub size: usize,
     pub count: usize,
     pub unixfs_pos: usize,
@@ -60,7 +59,6 @@ pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
 }
 
 impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
-    // might be best to pass the request object in the buffer fn each time?
     pub fn new(range: R) -> Self {
         Self {
             range,
@@ -75,6 +73,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             _marker: PhantomData,
         }
     }
+
     pub fn buffer<F: FnMut() -> *mut ngx_chain_t>(
         &mut self,
         input: *mut ngx_chain_t,
