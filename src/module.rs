@@ -152,10 +152,11 @@ fn log_buf_info(r: &mut Request, chain: *mut ngx_chain_t, tag: &str) {
 
         ngx_log_debug_http!(
             r,
-            "car_range {} buf chain: size {}, last {}",
+            "car_range {} buf chain: size {}, last {}, file {}",
             tag,
             buf.len(),
-            buf.is_last()
+            buf.is_last(),
+            buf.is_file()
         );
     }
 

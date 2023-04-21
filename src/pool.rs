@@ -100,6 +100,11 @@ pub trait Buffer<'a> {
             (*buf).set_sync(1);
         }
     }
+
+    fn is_file(&self) -> bool {
+        let buf = self.as_ngx_buf();
+        unsafe { (*buf).in_file() == 1 }
+    }
 }
 
 pub struct MemoryBuffer<'a> {
