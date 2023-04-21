@@ -21,3 +21,4 @@ test_range_request "0:1048576"
 
 test_range_request "1048576:2097152"
 
+cat /var/log/nginx/error.log
