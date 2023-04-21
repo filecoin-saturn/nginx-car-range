@@ -140,6 +140,7 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
     ngx_log_debug_http!(req, "car_range header filter set context");
 
     req.set_content_length_missing();
+    req.set_filter_need_in_memory();
 
     bail!()
 }

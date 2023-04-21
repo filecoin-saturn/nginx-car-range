@@ -175,6 +175,10 @@ impl Request {
     pub fn set_content_type(&mut self, ct: ngx_str_t) {
         self.0.headers_out.content_type = ct;
     }
+
+    pub fn set_filter_need_in_memory(&mut self) {
+        self.0.set_filter_need_in_memory(1);
+    }
 }
 
 #[cfg(test)]
