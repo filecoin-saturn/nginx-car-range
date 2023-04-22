@@ -201,6 +201,12 @@ extern "C" fn ngx_car_range_body_filter(
 
         log_buf_info(req, out, "output");
 
+        if out.is_null() {
+            req.and_buffered();
+        } else {
+            req.not_buffered();
+        }
+
         ngx_log_debug_http!(
             req,
             "car_range size {}, unixfs pos {}",
