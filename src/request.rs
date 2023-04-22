@@ -177,7 +177,8 @@ impl Request {
     }
 
     pub fn set_filter_need_in_memory(&mut self) {
-        self.0.set_filter_need_in_memory(1);
+        // self.0.set_filter_need_in_memory(1);
+        self.0.set_main_filter_need_in_memory(1);
     }
 
     pub fn and_buffered(&mut self) {
