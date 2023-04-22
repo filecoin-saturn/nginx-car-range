@@ -201,6 +201,8 @@ extern "C" fn ngx_car_range_body_filter(
 
         log_buf_info(req, out, "output");
 
+        // indicates that the filter is delaying sending buffers.
+        // TODO: not sure if it has any effect but in the brotli filter it is set.
         if out.is_null() {
             req.and_buffered();
         } else {
