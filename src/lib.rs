@@ -26,9 +26,38 @@ pub static mut ngx_module_names: [*const c_char; 2] =
     ["car_range\0".as_ptr() as *const c_char, ptr::null()];
 
 #[no_mangle]
-pub static mut ngx_module_order: [*const c_char; 3] = [
+pub static mut ngx_module_order: [*const c_char; 32] = [
+    "ngx_http_brotli_filter_nodule\0".as_ptr() as *const c_char,
+    "ngx_http_brotli_static_module\0".as_ptr() as *const c_char,
+    "ngx_http_static_module\0".as_ptr() as *const c_char,
+    "ngx_http_gzip_static_module\0".as_ptr() as *const c_char,
+    "ngx_http_dav_module\0".as_ptr() as *const c_char,
+    "ngx_http_autoindex_module\0".as_ptr() as *const c_char,
+    "ngx_http_index_module\0".as_ptr() as *const c_char,
+    "ngx_http_random_index_module\0".as_ptr() as *const c_char,
+    "ngx_http_access_module\0".as_ptr() as *const c_char,
+    "ngx_http_realip_module\0".as_ptr() as *const c_char,
+    "ngx_http_write_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_header_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_chunked_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_v2_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_range_header_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_gzip_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_postpone_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_ssi_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_charset_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_xslt_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_image_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_sub_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_addition_filter_module\0".as_ptr() as *const c_char,
     "car_range\0".as_ptr() as *const c_char,
+    "ngx_http_gunzip_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_userid_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_headers_filter_module\0".as_ptr() as *const c_char,
     "ngx_http_copy_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_range_body_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_not_modified_filter_module\0".as_ptr() as *const c_char,
+    "ngx_http_slice_filter_module\0".as_ptr() as *const c_char,
     ptr::null(),
 ];
 

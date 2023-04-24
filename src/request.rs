@@ -175,6 +175,22 @@ impl Request {
     pub fn set_content_type(&mut self, ct: ngx_str_t) {
         self.0.headers_out.content_type = ct;
     }
+
+    pub fn set_filter_need_in_memory(&mut self) {
+        // TODO: not clear which one is the proper option here:
+        // self.0.set_filter_need_in_memory(1);
+        self.0.set_main_filter_need_in_memory(1);
+    }
+
+    pub fn and_buffered(&mut self) {
+        let buffered = self.0.buffered();
+        self.0.set_buffered(buffered | 64);
+    }
+
+    pub fn not_buffered(&mut self) {
+        let buffered = self.0.buffered();
+        self.0.set_buffered(buffered & !64);
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use crate::bindings::*;
 use crate::car_reader::CarBufferContext;
 use crate::log::ngx_log_debug_http;
+use crate::pool::{Buffer, MemoryBuffer};
 use crate::request::*;
 use std::ops::Bound;
 use std::os::raw::{c_char, c_void};
@@ -139,9 +140,30 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
     ngx_log_debug_http!(req, "car_range header filter set context");
 
     req.set_content_length_missing();
-    req.set_content_type(ngx_string!("application/vnd.ipld.car; version=1"));
+    req.set_filter_need_in_memory();
 
     bail!()
+}
+
+fn log_buf_info(r: &mut Request, chain: *mut ngx_chain_t, tag: &str) {
+    let mut cl = chain;
+    while !cl.is_null() {
+        let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+        cl = unsafe { (*cl).next };
+
+        ngx_log_debug_http!(
+            r,
+            "car_range {} buf chain: size {}, last {}, file {}",
+            tag,
+            buf.len(),
+            buf.is_last(),
+            buf.is_file()
+        );
+    }
+
+    if chain.is_null() {
+        ngx_log_debug_http!(r, "car_range {} null chain", tag);
+    }
 }
 
 #[no_mangle]
@@ -152,6 +174,8 @@ extern "C" fn ngx_car_range_body_filter(
     let req = unsafe { &mut Request::from_ngx_http_request(r) };
 
     ngx_log_debug_http!(req, "http car_range body filter {}", env!("GIT_HASH"));
+
+    log_buf_info(req, body, "input");
 
     // call the next filter in the chain when we exit
     macro_rules! bail {
@@ -174,6 +198,23 @@ extern "C" fn ngx_car_range_body_filter(
 
     unsafe {
         let out = (*ctx).buffer(body, || req.pool().alloc_chain());
+
+        log_buf_info(req, out, "output");
+
+        // indicates that the filter is delaying sending buffers.
+        // TODO: not sure if it has any effect but in the brotli filter it is set.
+        if out.is_null() {
+            req.and_buffered();
+        } else {
+            req.not_buffered();
+        }
+
+        ngx_log_debug_http!(
+            req,
+            "car_range size {}, unixfs pos {}",
+            (*ctx).size,
+            (*ctx).unixfs_pos
+        );
 
         ngx_http_next_body_filter
             .map(|cb| cb(r, out))

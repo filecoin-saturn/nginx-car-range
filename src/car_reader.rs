@@ -47,19 +47,18 @@ pub enum DataType {
 
 pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
     range: R,
-    // request: &'a mut Request,
     pub size: usize,
     pub count: usize,
+    pub unixfs_pos: usize,
     offset: usize,
-    unixfs_pos: usize,
     header: usize,
     last_codec: u64,
     done: usize,
+    buf: Vec<u8>,
     _marker: PhantomData<&'a ()>,
 }
 
 impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
-    // might be best to pass the request object in the buffer fn each time?
     pub fn new(range: R) -> Self {
         Self {
             range,
@@ -70,13 +69,15 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             header: 0,
             last_codec: 0,
             done: 0,
+            buf: Vec::with_capacity(64),
             _marker: PhantomData,
         }
     }
-    pub fn buffer<F: Fn() -> *mut ngx_chain_t>(
+
+    pub fn buffer<F: FnMut() -> *mut ngx_chain_t>(
         &mut self,
         input: *mut ngx_chain_t,
-        alloc_cl: F,
+        mut alloc_cl: F,
     ) -> *mut ngx_chain_t {
         // start with the first chain link
         let mut cl = input;
@@ -117,9 +118,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         // set as last.
                         Bound::Unbounded => false,
                     };
-                    let is_seek = lt_bound(self.range.start_bound(), self.unixfs_pos as u64);
-
-                    if sub > 0 && !is_seek || is_last {
+                    if sub > 0 && !self.is_seek() || is_last {
                         self.done = 1;
                         buf.set_last_buf(true);
                     }
@@ -133,13 +132,11 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         (*cl).next = std::ptr::null_mut();
 
                         if sub > 0 {
-                            let last = (*(*cl).buf).last;
-                            (*(*cl).buf).last = last.wrapping_sub(sub);
+                            ngx_buf_remove_end((*cl).buf, sub);
                         }
 
                         if skip > 0 {
-                            let pos = (*(*cl).buf).pos;
-                            (*(*cl).buf).pos = pos.add(skip);
+                            ngx_buf_remove_start((*cl).buf, skip);
                         }
                     }
                     *ll = cl;
@@ -150,18 +147,66 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             let mut current = buf.as_bytes();
             self.size += current.len();
 
-            // if the current frame extends beyond the buffer size
-            if self.offset > current.len() {
-                // currently reading partial chunks from a unixfs raw leaf
-                if self.last_codec == 0x55 {
-                    self.unixfs_pos += current.len();
+            // if last_code == 0, there was not enough data in the last buffer to read the CID
+            if self.last_codec == 0 && self.offset > 0 {
+                // fill the buffer if enough data is available
+                let avail = self.buf.capacity() - self.buf.len();
+                let eb = if avail > current.len() {
+                    current.len()
+                } else {
+                    avail
+                };
+                // efficiently append the current buffer to self.buf until the capacity is reached
+                unsafe {
+                    let ptr = self.buf.as_mut_ptr().add(self.buf.len());
+                    std::ptr::copy_nonoverlapping(current.as_ptr(), ptr, eb);
+                    self.buf.set_len(self.buf.len() + eb);
                 }
 
-                if lt_bound(self.range.start_bound(), self.unixfs_pos as u64) {
-                    skip += current.len();
-                } else {
-                    pos += current.len();
-                }
+                // attempt at reading a CID from buffered data
+                let mut reader = Cursor::new(&self.buf[..]);
+                match Cid::read_bytes(&mut reader) {
+                    Ok(cid) => {
+                        self.last_codec = cid.codec();
+                        let sb = self.buf.len()
+                            - (reader.position() as usize)
+                            - (self.buf.capacity() - avail);
+                        self.buf.clear();
+                        current = &buf.as_bytes()[sb..];
+                        self.offset -= sb;
+                    }
+                    Err(_) => {
+                        // extend the buffer cap ?;
+                    }
+                };
+            }
+            // a macro to advance the skip or pos values based on a given size and last_codec
+            macro_rules! advance {
+                ($size:expr) => {
+                    match self.last_codec {
+                        0x70 => {
+                            pos += $size;
+                        }
+                        0x55 => {
+                            self.unixfs_pos += $size;
+                            if self.is_seek() {
+                                skip += $size;
+                            } else {
+                                pos += $size;
+                            }
+                        }
+                        0 => {}
+                        _ => {
+                            pos += $size;
+                        }
+                    };
+                };
+            }
+
+            // if the current frame extends beyond the buffer size
+            if self.offset >= current.len() {
+                // use the advance macro based on current.len()
+                advance!(current.len());
 
                 self.offset -= current.len();
 
@@ -171,14 +216,9 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 
             // if the current frame ends within this buffer
             if self.offset > 0 {
-                if self.last_codec == 0x55 {
-                    self.unixfs_pos += self.offset;
-                }
-                if lt_bound(self.range.start_bound(), self.unixfs_pos as u64) {
-                    skip += self.offset;
-                } else {
-                    pos += self.offset;
-                }
+                // use the advance macro based on self.offset
+                advance!(self.offset);
+
                 current = &current[self.offset..];
                 self.offset = 0;
             }
@@ -190,6 +230,8 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         continue;
                     }
                 };
+                // reset previous frame codec.
+                self.last_codec = 0;
 
                 let frame_size = size + read;
 
@@ -213,8 +255,16 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                 let mut reader = Cursor::new(&frame[read..]);
                 let cid = match Cid::read_bytes(&mut reader) {
                     Ok(cid) => cid,
-                    // TODO: if CID is across 2 buffers we need some buffering
-                    Err(_) => continue,
+                    // If CID is across 2 buffers we need some buffering
+                    Err(_) => {
+                        let mut i = read;
+                        while i < frame.len() {
+                            self.buf.push(frame[i]);
+                            i += 1;
+                        }
+
+                        continue;
+                    }
                 };
                 self.last_codec = cid.codec();
                 match cid.codec() {
@@ -225,15 +275,14 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                     }
                     0x55 => {
                         let unixfs_size = frame.len() - (read + reader.position() as usize);
-                        let is_seek = lt_bound(self.range.start_bound(), self.unixfs_pos as u64);
-                        if is_seek
+                        if self.is_seek()
                             && self
                                 .range
                                 .contains(&((self.unixfs_pos + unixfs_size) as u64))
                             || self.range.contains(&(self.unixfs_pos as u64))
                         {
                             pos += frame.len();
-                        } else if is_seek && pos == start {
+                        } else if self.is_seek() && pos == start {
                             skip += frame.len();
                         }
                         self.unixfs_pos += unixfs_size;
@@ -249,7 +298,36 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 
             append_buf!();
         }
+
         out
+    }
+
+    fn is_seek(&self) -> bool {
+        lt_bound(self.range.start_bound(), self.unixfs_pos as u64)
+    }
+}
+
+// a function to remove bytes at the end of a ngx_buf_s mutable pointer
+fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
+    // assert that the buffer is not null
+    assert!(!buf.is_null());
+    unsafe {
+        (*buf).last = (*buf).last.sub(len);
+        // if the buffer is in a file, adjust the file_last value
+        if (*buf).in_file() == 1 {
+            (*buf).file_last -= len as i64;
+        }
+    }
+}
+
+fn ngx_buf_remove_start(buf: *mut ngx_buf_s, len: usize) {
+    // assert that the buffer is not null
+    assert!(!buf.is_null());
+    unsafe {
+        (*buf).pos = (*buf).pos.add(len);
+        if (*buf).in_file() == 1 {
+            (*buf).file_pos += len as i64;
+        }
     }
 }
 
@@ -778,6 +856,165 @@ mod tests {
         // header + unxifs_root + raw_block(1000) + raw_block(157)
         assert_eq!(buf.len(), 59 + 379 + 1038 + 157);
         assert_eq!(buf, expected);
+    }
+
+    // test against some small buffers that are not aligned with the block size.
+    // the buffers were generated by a real nginx instance.
+    #[test]
+    fn test_range_tiny_buffers() {
+        use crate::bindings::*;
+
+        let chunk1 = hex::decode("3aa265726f6f747381d82a58250001701220afcf9cd411b135aa1db2dd89bef443a93fb7894d2dfcbb657a732671a363b7b56776657273696f6e01").unwrap();
+        let chunk2 = hex::decode("61").unwrap();
+        let chunk3 =
+            hex::decode("01701220afcf9cd411b135aa1db2dd89bef443a93fb7894d2dfcbb657a732671a363b7b5")
+                .unwrap();
+        let chunk4 = hex::decode("12370a2401701220cbd6719e57578084e7fecd530689626bfbe56aa4b0b6cfb334fc6f0667dcad2d120a4d657869636f2e4a504718a4c6dc010a020801").unwrap();
+        let chunk5 = hex::decode("f501").unwrap();
+        let chunk6 =
+            hex::decode("01701220cbd6719e57578084e7fecd530689626bfbe56aa4b0b6cfb334fc6f0667dcad2d")
+                .unwrap();
+        let chunk7 = hex::decode("122c0a2401551220e82a3d5e3a3ec338f410510043f2b923d8d62bfb158d9ae5133cf160fda8defd120018808040122c0a2401551220607a8cb575d30e374f784922d1cdd2103953331ee0e42592f5e76a55ba4ee5be120018808040122c0a2401551220fb34ed5811abf2bf81e6e0ad788e1c38344446826b5ff399226d3262259bd98b120018808040122c0a2401551220fa38ae984cf83a6076147dbe8aac2cedb24509c35649ca7380a7f233de10d70a120018d3c41c0a17080218d3c4dc0120808040208080402080804020d3c41c").unwrap();
+
+        let exp = [
+            &chunk1[..],
+            &chunk2[..],
+            &chunk3[..],
+            &chunk4[..],
+            &chunk5[..],
+            &chunk6[..],
+            &chunk7[..],
+        ]
+        .concat();
+
+        let buf1 = to_ngx_buf(&chunk1[..]);
+        let buf2 = to_ngx_buf(&chunk2[..]);
+        let buf3 = to_ngx_buf(&chunk3[..]);
+        let buf4 = to_ngx_buf(&chunk4[..]);
+        let buf5 = to_ngx_buf(&chunk5[..]);
+        let buf6 = to_ngx_buf(&chunk6[..]);
+        let buf7 = to_ngx_buf(&chunk7[..]);
+
+        let l7 = ngx_chain_s {
+            buf: &buf7 as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+        let l6 = ngx_chain_s {
+            buf: &buf6 as *const _ as *mut _,
+            next: &l7 as *const _ as *mut _,
+        };
+        let l5 = ngx_chain_s {
+            buf: &buf5 as *const _ as *mut _,
+            next: &l6 as *const _ as *mut _,
+        };
+        let l4 = ngx_chain_s {
+            buf: &buf4 as *const _ as *mut _,
+            next: &l5 as *const _ as *mut _,
+        };
+        let l3 = ngx_chain_s {
+            buf: &buf3 as *const _ as *mut _,
+            next: &l4 as *const _ as *mut _,
+        };
+        let l2 = ngx_chain_s {
+            buf: &buf2 as *const _ as *mut _,
+            next: &l3 as *const _ as *mut _,
+        };
+        let l1 = ngx_chain_s {
+            buf: &buf1 as *const _ as *mut _,
+            next: &l2 as *const _ as *mut _,
+        };
+
+        // new links mocked alloc from the ngx pool
+        let cl1 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl2 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl3 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl4 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl5 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl6 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+        let cl7 = ngx_chain_s {
+            buf: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        };
+
+        let mut cli = 0;
+
+        let mut ctx = CarBufferContext::new(5500..);
+
+        let o = ctx.buffer(&l1 as *const _ as *mut _, || {
+            cli += 1;
+            let cl = match cli {
+                1 => &cl1,
+                2 => &cl2,
+                3 => &cl3,
+                4 => &cl4,
+                5 => &cl5,
+                6 => &cl6,
+                _ => &cl7,
+            };
+            cl as *const _ as *mut _
+        });
+
+        assert!(&cl1 as *const _ as *mut _ == o);
+
+        let mut result = vec![];
+
+        let mut cl = o;
+        while !cl.is_null() {
+            let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+            cl = unsafe { (*cl).next };
+            result.extend_from_slice(buf.as_bytes());
+        }
+
+        assert_eq!(result, exp);
+    }
+
+    // verify that ngx_buf_remove_end can remove 24 bytes at the end of a 1kb buffer
+    #[test]
+    fn test_buf_remove_end() {
+        let mut buf = to_ngx_buf(&vec![0u8; 1024][..]);
+        let mut buf = MemoryBuffer::from_ngx_buf(&mut buf);
+        ngx_buf_remove_end(buf.as_ngx_buf_mut(), 24);
+        assert_eq!(buf.len(), 1000);
+    }
+
+    // test CarBufferContext::buffer against a chain of 1 empty buffer
+    // and an unbounded range
+    #[test]
+    fn test_buf_filter_chain_empty() {
+        let buf = to_ngx_buf(&vec![0u8; 0][..]);
+        // check that the buffer is empty
+        assert_eq!(buf.last, buf.pos);
+
+        let chain = ngx_chain_s {
+            buf: &buf as *const _ as *mut _,
+            next: std::ptr::null_mut(),
+        };
+
+        let mut ctx = CarBufferContext::new(..);
+
+        let o = ctx.buffer(&chain as *const _ as *mut _, || {
+            panic!("should not be called");
+        });
+
+        assert!(o.is_null());
     }
 
     // #[test]
