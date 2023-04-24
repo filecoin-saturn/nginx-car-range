@@ -136,8 +136,7 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
                         }
 
                         if skip > 0 {
-                            let pos = (*(*cl).buf).pos;
-                            (*(*cl).buf).pos = pos.add(skip);
+                            ngx_buf_remove_start((*cl).buf, skip);
                         }
                     }
                     *ll = cl;
@@ -314,6 +313,21 @@ fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
     assert!(!buf.is_null());
     unsafe {
         (*buf).last = (*buf).last.sub(len);
+        // if the buffer is in a file, adjust the file_last value
+        if (*buf).in_file() == 1 {
+            (*buf).file_last -= len as i64;
+        }
+    }
+}
+
+fn ngx_buf_remove_start(buf: *mut ngx_buf_s, len: usize) {
+    // assert that the buffer is not null
+    assert!(!buf.is_null());
+    unsafe {
+        (*buf).pos = (*buf).pos.add(len);
+        if (*buf).in_file() == 1 {
+            (*buf).file_pos += len as i64;
+        }
     }
 }
 
