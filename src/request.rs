@@ -177,6 +177,7 @@ impl Request {
     }
 
     pub fn set_filter_need_in_memory(&mut self) {
+        // TODO: not clear which one is the proper option here:
         // self.0.set_filter_need_in_memory(1);
         self.0.set_main_filter_need_in_memory(1);
     }
