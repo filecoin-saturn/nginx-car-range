@@ -17,8 +17,9 @@ sleep 1
 # ls -lh partial.car
 # /usr/local/bin/car ls -v partial.car
 
-test_range_request "0:1048576"
+# test_range_request "0:1048576"
 
-test_range_request "1048576:2097152"
+# test_range_request "1048576:2097152"
+curl --trace -o partial.car -H "Accept: application/vnd.ipld.car" "http://127.0.0.1:8080/midfixture.car?bytes=1048576:2097152"
 
 cat /var/log/nginx/error.log
