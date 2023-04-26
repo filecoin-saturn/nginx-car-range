@@ -41,6 +41,11 @@ impl Pool {
     pub fn alloc_chain(&mut self) -> *mut ngx_chain_t {
         unsafe { ngx_alloc_chain_link(self.0) }
     }
+
+    // pub fn calloc_buf(&mut self) -> *mut ngx_buf_t {
+    //     let size = std::mem::size_of::<ngx_buf_t>();
+    //     unsafe { ngx_pcalloc(self.0, size) as *mut ngx_buf_t }
+    // }
 }
 
 unsafe extern "C" fn cleanup_type<T>(data: *mut c_void) {
