@@ -3,7 +3,8 @@ set -x #echo on
 
 test_range_request () {
   range="$1"
-  code="$(curl -sw "%{http_code}\n" -o partial.car -H "Accept: application/vnd.ipld.car" "http://127.0.0.1:8080/midfixture.car?bytes=${range}")"
+  name="$2"
+  code="$(curl -sw "%{http_code}\n" -o partial.car -H "Accept: application/vnd.ipld.car" "http://127.0.0.1:8080/${name}.car?bytes=${range}")"
   test "$code" -eq 200 || (cat /var/log/nginx/error.log && exit 1)
   ls -lh partial.car
   /usr/local/bin/car ls -v partial.car
@@ -17,8 +18,10 @@ sleep 1
 # ls -lh partial.car
 # /usr/local/bin/car ls -v partial.car
 
-test_range_request "0:1048576"
+test_range_request "0:1048576" "midfixture"
 
-test_range_request "1048576:2097152"
+test_range_request "1048576:2097152" "midfixture"
+
+test_range_request "555555:999999" "bigfixture"
 
 cat /var/log/nginx/error.log
