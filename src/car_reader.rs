@@ -306,8 +306,6 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
 
                 let frame_size = size + read;
 
-                println!("frame size: {}", frame_size);
-
                 let split = if frame_size <= current.len() {
                     frame_size
                 } else {
