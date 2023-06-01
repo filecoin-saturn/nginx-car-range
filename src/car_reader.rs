@@ -1,9 +1,8 @@
 use crate::bindings::*;
-use crate::pool::{Buffer, MemoryBuffer};
+use crate::pool::{Allocator, Buffer, MemoryBuffer};
 use crate::varint::VarInt;
 use cid::Cid;
-use core2::io::Cursor;
-use prost::Message;
+use core2::io::{self, Cursor};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::{Bound, RangeBounds};
@@ -45,49 +44,29 @@ pub enum DataType {
     HamtShard = 5,
 }
 
-pub struct CarBufferContext<'a, R: RangeBounds<u64>> {
-    range: R,
-    pub size: usize,
-    pub count: usize,
-    pub unixfs_pos: usize,
-    offset: usize,
-    header: usize,
-    last_codec: u64,
+pub struct CarBufferContext<'a, R: RangeBounds<u64> + Clone, A: Allocator> {
+    pool: A,
+    framed: Framed<R>,
     done: usize,
-    buf: Vec<u8>,
-    unixfs_buf: Vec<u8>,
-    buffer_chain: *mut ngx_chain_t,
     _marker: PhantomData<&'a ()>,
 }
 
-impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
-    pub fn new(range: R) -> Self {
+impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
+    pub fn new(range: R, pool: A) -> Self {
         Self {
-            range,
-            offset: 0,
-            size: 0,
-            count: 0,
-            unixfs_pos: 0,
-            header: 0,
-            last_codec: 0,
+            pool,
+            framed: Framed::new(range),
             done: 0,
-            buf: Vec::with_capacity(64),
-            // set the capacity to the default unixfs block size
-            unixfs_buf: Vec::with_capacity(262154),
-            buffer_chain: std::ptr::null_mut(),
             _marker: PhantomData,
         }
     }
 
-    pub fn buffer<F: FnMut() -> *mut ngx_chain_t>(
-        &mut self,
-        input: *mut ngx_chain_t,
-        mut alloc_cl: F,
-    ) -> *mut ngx_chain_t {
+    pub fn buffer(&mut self, input: *mut ngx_chain_t) -> *mut ngx_chain_t {
         // start with the first chain link
         let mut cl = input;
         // output buffer chain is null by default
         let mut out: *mut ngx_chain_t = std::ptr::null_mut();
+        // once we sent the last buffer this method will always return null
         if self.done == 1 {
             return out;
         }
@@ -98,346 +77,30 @@ impl<'a, R: RangeBounds<u64>> CarBufferContext<'a, R> {
             let mut buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
             cl = unsafe { (*cl).next };
 
-            let start = self.size;
+            // TODO: handle internal errors
+            let (skip, sub) = self.framed.next(buf.as_bytes()).unwrap();
 
-            let mut pos = start;
-            let mut skip = 0;
-
-            // we call this macro when we've parsed and filtered all the frames in the chunk
-            // depending on the buffer size we might iterate over multiple frames or just append it
-            // to our buffer until we get to the next boundary.
-            macro_rules! append_buf {
-                () => {
-                    let sub = if pos > start {
-                        self.size - (pos + skip)
-                    } else {
-                        0
-                    };
-
-                    if skip == buf.len() {
-                        // if the buffer should be skipped and the last codec was unixfs
-                        // we save it in case the boundary is in this chunk.
-                        if self.last_codec == 0x70 {
-                            let mut cl = alloc_cl();
-                            if cl.is_null() {
-                                continue;
-                            }
-                            unsafe {
-                                (*cl).buf = buf.as_ngx_buf_mut();
-                                (*cl).next = std::ptr::null_mut();
-                            }
-                            self.append_to_chain(cl);
-                        } else {
-                            buf.set_empty();
-                        }
-                        continue;
-                    }
-
-                    let is_last = match self.range.end_bound() {
-                        Bound::Included(&b) => b == self.unixfs_pos as u64,
-                        Bound::Excluded(&b) => b - 1 == self.unixfs_pos as u64,
-                        // if the range is unbounded the last buffer should already be
-                        // set as last.
-                        Bound::Unbounded => false,
-                    };
-                    if sub > 0 && !self.is_seek() || is_last {
-                        self.done = 1;
-                        buf.set_last_buf(true);
-                    }
-
-                    let mut cl = alloc_cl();
-                    if cl.is_null() {
-                        continue;
-                    }
-
-                    unsafe {
-                        (*cl).buf = buf.as_ngx_buf_mut();
-                        (*cl).next = std::ptr::null_mut();
-
-                        if sub > 0 {
-                            ngx_buf_remove_end((*cl).buf, sub);
-                        }
-
-                        if skip > 0 {
-                            ngx_buf_remove_start((*cl).buf, skip);
-                        }
-                    }
-                    *ll = cl;
-                    ll = unsafe { &mut (*cl).next };
-                };
-            }
-
-            // current is a slice of the current buffer that we shrink as we read data
-            let mut current = buf.as_bytes();
-            self.size += current.len();
-
-            // if last_code == 0, there was not enough data in the last buffer to read the CID
-            if self.last_codec == 0 && self.offset > 0 {
-                // fill the buffer if enough data is available
-                let avail = self.buf.capacity() - self.buf.len();
-                let eb = if avail > current.len() {
-                    current.len()
-                } else {
-                    avail
-                };
-                // efficiently append the current buffer to self.buf until the capacity is reached
-                unsafe {
-                    let ptr = self.buf.as_mut_ptr().add(self.buf.len());
-                    std::ptr::copy_nonoverlapping(current.as_ptr(), ptr, eb);
-                    self.buf.set_len(self.buf.len() + eb);
-                }
-
-                // attempt at reading a CID from buffered data
-                let mut reader = Cursor::new(&self.buf[..]);
-                match Cid::read_bytes(&mut reader) {
-                    Ok(cid) => {
-                        self.last_codec = cid.codec();
-                        let sb = self.buf.len()
-                            - (reader.position() as usize)
-                            - (self.buf.capacity() - avail);
-                        self.buf.clear();
-                        current = &buf.as_bytes()[sb..];
-                        self.offset -= sb;
-                    }
-                    Err(_) => {
-                        // extend the buffer cap ?;
-                    }
-                };
-            }
-            // a macro to append the buffered chain to the end of the current chain
-            macro_rules! append_buffered_chain {
-                () => {
-                    if !self.buffer_chain.is_null() {
-                        let mut cl = self.buffer_chain;
-                        while !unsafe { (*cl).next.is_null() } {
-                            cl = unsafe { (*cl).next };
-                        }
-                        // we need to include the previous chunks too
-                        *ll = self.buffer_chain;
-                        ll = unsafe { &mut (*cl).next };
-                    }
-                };
-            }
-            // a macro to advance the skip or pos values based on a given size and last_codec
-            // used only when we continue reading a previous frame in this buffer.
-            macro_rules! advance {
-                ($size:expr) => {
-                    match self.last_codec {
-                        0x70 => {
-                            let mut i = 0;
-                            while i < $size {
-                                self.unixfs_buf.push(current[i]);
-                                i += 1;
-                            }
-                            // if the offset is within the current buffer
-                            if self.offset <= current.len() {
-                                let frame = &self.unixfs_buf[..];
-                                if let Some(unixfs_size) = self.decode_unixfs_size(frame) {
-                                    self.unixfs_pos += unixfs_size;
-                                    if self.is_seek() {
-                                        // we're still seeking so we can skip the part of the
-                                        // buffer before it gets buffered by the unixfs decoder
-                                        ngx_buf_remove_start(buf.as_ngx_buf_mut(), $size);
-                                    } else {
-                                        append_buffered_chain!();
-                                        pos += $size;
-                                    }
-                                } else {
-                                    // if there is no unixfs size, it must be an intermediary node
-                                    // so we forward it.
-                                    append_buffered_chain!();
-                                    pos += $size;
-                                }
-                                self.unixfs_buf.clear();
-                                self.buffer_chain = std::ptr::null_mut();
-                            } else {
-                                if self.is_seek() {
-                                    skip += $size;
-                                } else {
-                                    pos += $size;
-                                }
-                            }
-                        }
-                        0x55 => {
-                            self.unixfs_pos += $size;
-                            if self.is_seek() {
-                                skip += $size;
-                            } else {
-                                pos += $size;
-                            }
-                        }
-                        0 => {}
-                        _ => {
-                            pos += $size;
-                        }
-                    };
-                };
-            }
-
-            // if the current frame extends beyond the buffer size
-            if self.offset >= current.len() {
-                // use the advance macro based on current.len()
-                advance!(current.len());
-
-                self.offset -= current.len();
-
-                append_buf!();
+            let mut cl = self.pool.alloc_chain();
+            if cl.is_null() {
                 continue;
             }
+            unsafe {
+                (*cl).buf = buf.as_ngx_buf_mut();
+                (*cl).next = std::ptr::null_mut();
 
-            // if the current frame ends within this buffer
-            if self.offset > 0 {
-                // use the advance macro based on self.offset
-                advance!(self.offset);
-
-                current = &current[self.offset..];
-                self.offset = 0;
-            }
-
-            while !current.is_empty() {
-                let (size, read) = match usize::decode_var(current) {
-                    Some(var) => var,
-                    None => {
-                        continue;
-                    }
-                };
-                // reset previous frame codec.
-                self.last_codec = 0;
-
-                let frame_size = size + read;
-
-                let split = if frame_size <= current.len() {
-                    frame_size
-                } else {
-                    self.offset = frame_size - current.len();
-                    current.len()
-                };
-
-                let (frame, next) = current.split_at(split);
-                current = next;
-
-                if self.header == 0 {
-                    self.header += frame.len();
-                    pos += frame.len();
-
-                    let header: CarHeader = serde_ipld_dagcbor::from_slice(&frame[read..]).unwrap();
-                    if header.version != 1 {
-                        // TODO: we should error here
-                        panic!("unsupported car version {}", header.version);
-                    }
-                    // CAR header can be skipped
-                    continue;
+                if sub > 0 {
+                    ngx_buf_remove_end((*cl).buf, sub);
                 }
 
-                let mut reader = Cursor::new(&frame[read..]);
-                let cid = match Cid::read_bytes(&mut reader) {
-                    Ok(cid) => cid,
-                    // If CID is across 2 buffers we need some buffering
-                    Err(_) => {
-                        let mut i = read;
-                        while i < frame.len() {
-                            self.buf.push(frame[i]);
-                            i += 1;
-                        }
-
-                        continue;
-                    }
-                };
-                self.last_codec = cid.codec();
-                let position = read + reader.position() as usize;
-                if let Some(unixfs_size) = match cid.codec() {
-                    // dagpb
-                    0x70 => {
-                        if self.offset > 0 {
-                            // need to buffer the whole frame before we can decode :/
-                            if self.is_seek() || self.range.contains(&(self.unixfs_pos as u64)) {
-                                let mut i = position;
-                                while i < frame.len() {
-                                    self.unixfs_buf.push(frame[i]);
-                                    i += 1;
-                                }
-                                if self.is_seek() {
-                                    skip += frame.len();
-                                } else {
-                                    pos += frame.len();
-                                }
-                            } else {
-                                continue;
-                            }
-                            None
-                        } else {
-                            self.decode_unixfs_size(&frame[position..]).or_else(|| {
-                                pos += frame.len();
-                                None
-                            })
-                        }
-                    }
-                    // raw leaf
-                    0x55 => Some(frame.len() - position),
-                    _ => {
-                        // include everything else
-                        pos += frame.len();
-                        None
-                    }
-                } {
-                    if self.is_seek()
-                        && self
-                            .range
-                            .contains(&((self.unixfs_pos + unixfs_size) as u64))
-                        || self.range.contains(&(self.unixfs_pos as u64))
-                    {
-                        pos += frame.len();
-                    } else if self.is_seek() && pos == start {
-                        skip += frame.len();
-                    }
-                    self.unixfs_pos += unixfs_size;
+                if skip > 0 {
+                    ngx_buf_remove_start((*cl).buf, skip);
                 }
             }
-
-            self.count += 1;
-
-            append_buf!();
+            *ll = cl;
+            ll = unsafe { &mut (*cl).next };
         }
 
         out
-    }
-
-    fn is_seek(&self) -> bool {
-        lt_bound(self.range.start_bound(), self.unixfs_pos as u64)
-    }
-
-    // a util method for decoding a unixfs node from a byte slice
-    fn decode_unixfs_size(&self, data: &[u8]) -> Option<usize> {
-        let outer = dag_pb::PbNode::decode(data).ok()?;
-        if !outer.links.is_empty() {
-            return None;
-        }
-        let inner_data = outer.data?;
-        let size = inner_data.len();
-        let inner = match unixfs_pb::Data::decode(inner_data) {
-            Ok(inner) => inner,
-            Err(_) => {
-                return Some(size);
-            }
-        };
-        inner.data.map(|data| data.len()).or(Some(size))
-    }
-
-    // append a buffer to the end of the buffer_chain
-    fn append_to_chain(&mut self, link: *mut ngx_chain_t) {
-        unsafe {
-            // if the buffer chain is empty, set the first buffer to the new buffer
-            if self.buffer_chain.is_null() {
-                self.buffer_chain = link;
-            } else {
-                // otherwise, append the buffer to the end of the chain
-                let mut current = self.buffer_chain;
-                while !(*current).next.is_null() {
-                    current = (*current).next;
-                }
-                (*current).next = link;
-            }
-        }
     }
 }
 
@@ -465,6 +128,301 @@ fn ngx_buf_remove_start(buf: *mut ngx_buf_s, len: usize) {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum WireType {
+    Varint = 0,
+    SixtyFourBit = 1,
+    LengthDelimited = 2,
+    StartGroup = 3,
+    EndGroup = 4,
+    ThirtyTwoBit = 5,
+}
+
+impl TryFrom<u64> for WireType {
+    type Error = anyhow::Error;
+
+    #[inline]
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(WireType::Varint),
+            1 => Ok(WireType::SixtyFourBit),
+            2 => Ok(WireType::LengthDelimited),
+            3 => Ok(WireType::StartGroup),
+            4 => Ok(WireType::EndGroup),
+            5 => Ok(WireType::ThirtyTwoBit),
+            _ => Err(anyhow::format_err!("invalid wire type value: {}", value)),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum FrameType {
+    CarHeader,
+    Block,
+    Cid,
+    RawLeaf,
+    MerkleDag,
+    PBLinks,
+    PBData,
+    UnixFs,
+    DataType,
+    FileSize,
+    BlockSizes,
+    UnixFsData,
+}
+
+struct Framed<R: RangeBounds<u64>> {
+    len: usize,
+    blk_len: usize,
+    blk_pos: usize,
+    buf: Vec<u8>,
+    range: R,
+    unixfs_read: usize,
+    state: FrameType,
+}
+
+impl<R: RangeBounds<u64>> Framed<R> {
+    fn new(range: R) -> Self {
+        Self {
+            len: 0,
+            blk_len: 0,
+            blk_pos: 0,
+            unixfs_read: 0,
+            range,
+            buf: Vec::with_capacity(72),
+            state: FrameType::CarHeader,
+        }
+    }
+
+    // reads all the frames in the buffer returning the number of bytes to remove from the start
+    // and end.
+    fn next(&mut self, buf: &[u8]) -> io::Result<(usize, usize)> {
+        let mut pos = 0;
+        let mut current = buf;
+        while current.len() > 0 {
+            if self.state == FrameType::Cid {
+                match self.decode_cid(current) {
+                    Some((cid, read)) => {
+                        self.state = FrameType::Block;
+                        current = &current[read..];
+
+                        println!("cid: {:?}", cid);
+                        match cid.codec() {
+                            0x55 => {
+                                self.state = FrameType::RawLeaf;
+                            }
+                            0x70 => {
+                                self.state = FrameType::MerkleDag;
+                            }
+                            _ => {}
+                        };
+                    }
+                    None => {
+                        current = &[];
+                        continue;
+                    }
+                };
+            }
+            // beginning of the frame
+            if self.len == 0 {
+                match self.decode_len(current) {
+                    Some((size, read)) => {
+                        current = &current[read..];
+                        self.len = size;
+                        println!("len = {}", self.len);
+
+                        match self.state {
+                            FrameType::Block => {
+                                self.state = FrameType::Cid;
+                                self.blk_len = size;
+                                self.len = 0;
+                            }
+                            FrameType::MerkleDag => {
+                                self.blk_pos += read;
+
+                                let key = size as u64;
+                                let wire_type = WireType::try_from(key & 0x7).unwrap();
+                                let tag = key as u32 >> 3;
+
+                                match tag {
+                                    2 => {
+                                        self.state = FrameType::PBLinks;
+                                        self.len = 0;
+                                        println!("wire_type: {:?}", wire_type);
+                                    }
+                                    1 => {
+                                        self.state = FrameType::PBData;
+                                        self.len = 0;
+                                    }
+                                    _ => unreachable!(),
+                                };
+                            }
+                            FrameType::UnixFs => {
+                                self.blk_pos += read;
+
+                                let key = size as u64;
+                                let wire_type = WireType::try_from(key & 0x7).unwrap();
+                                let tag = key as u32 >> 3;
+
+                                match tag {
+                                    1 => {
+                                        println!("Data::Type, wire_type: {:?}", wire_type);
+                                        self.state = FrameType::DataType;
+                                        self.len = 0;
+                                    }
+                                    2 => {
+                                        println!("Data::Data, wire_type: {:?}", wire_type);
+                                        self.state = FrameType::UnixFsData;
+                                        self.len = 0;
+                                    }
+                                    3 => {
+                                        println!("Data::FileSize, wire_type: {:?}", wire_type);
+                                        self.state = FrameType::FileSize;
+                                        self.len = 0;
+                                    }
+                                    4 => {
+                                        println!("Data::Blocksizes, wire_type: {:?}", wire_type);
+                                        self.state = FrameType::BlockSizes;
+                                        self.len = 0;
+                                    }
+                                    5 => {
+                                        println!("Data::HashType");
+                                    }
+                                    6 => {
+                                        println!("Data::Fanout");
+                                    }
+                                    _ => unreachable!(),
+                                };
+                            }
+                            FrameType::PBLinks => {
+                                self.blk_pos += read;
+                                println!("PBLinks, blk_pos: {}", self.blk_pos);
+                            }
+                            FrameType::UnixFsData => {
+                                self.blk_pos += read;
+                                println!("UnixFsData size: {}", size);
+                                self.unixfs_read += self.len;
+                                println!("blk_len: {}, blk_pos: {}", self.blk_len, self.blk_pos);
+                                self.len = self.blk_len - self.blk_pos;
+                            }
+                            FrameType::PBData
+                            | FrameType::DataType
+                            | FrameType::FileSize
+                            | FrameType::BlockSizes => {
+                                self.blk_pos += read;
+                                println!("frame_type: {:?}, blk_pos: {}", self.state, self.blk_pos);
+                                self.len = 0;
+
+                                if self.blk_len - self.blk_pos == 0 {
+                                    self.state = FrameType::Block;
+                                    self.blk_pos = 0;
+                                    pos += self.blk_len;
+                                } else {
+                                    self.state = FrameType::UnixFs;
+                                }
+                            }
+                            _ => {}
+                        };
+                    }
+                    None => {
+                        current = &[];
+                    }
+                };
+            // end of the frame
+            } else if current.len() >= self.len {
+                match self.state {
+                    FrameType::CarHeader => {
+                        self.state = FrameType::Block;
+                        pos += self.len;
+                    }
+                    FrameType::PBLinks => {
+                        self.state = FrameType::MerkleDag;
+                        self.blk_pos += self.len;
+                    }
+                    FrameType::UnixFsData => {
+                        self.blk_pos = 0;
+                        self.state = FrameType::Block;
+                        pos += self.blk_len;
+                    }
+                    _ => {}
+                };
+                current = &current[self.len..];
+                self.len = 0;
+
+            // partial frame
+            } else {
+                match self.state {
+                    FrameType::PBLinks => {
+                        self.blk_pos += current.len();
+                    }
+                    _ => {}
+                };
+                self.len -= current.len();
+                current = &[];
+            }
+        }
+        Ok((0, pos))
+    }
+
+    fn decode_len(&mut self, buf: &[u8]) -> Option<(usize, usize)> {
+        println!("decode_len");
+        let mut i = 0;
+        loop {
+            self.buf.push(buf[i]);
+            match usize::decode_var(&self.buf[..]) {
+                Some((size, _)) => {
+                    self.buf.clear();
+                    return Some((size, i + 1));
+                }
+                None => {
+                    if buf.len() - (i + 1) > 0 {
+                        i += 1;
+                        continue;
+                    } else {
+                        return None;
+                    }
+                }
+            };
+        }
+    }
+
+    fn decode_cid(&mut self, buf: &[u8]) -> Option<(Cid, usize)> {
+        println!("decode_cid");
+        let mut i = 0;
+
+        let filled = self.buf.len();
+
+        loop {
+            for j in i..std::cmp::min(i + 36, buf.len()) {
+                self.buf.push(buf[j]);
+                i = j;
+            }
+            // start from the next index
+            i += 1;
+            let mut reader = Cursor::new(&self.buf[..]);
+            match Cid::read_bytes(&mut reader) {
+                Ok(cid) => {
+                    let read = reader.position() as usize;
+                    self.buf.clear();
+                    self.blk_pos += read;
+                    return Some((cid, read - filled));
+                }
+                Err(_) => {
+                    if buf.len() > (i + 1) {
+                        continue;
+                    } else {
+                        return None;
+                    }
+                }
+            };
+        }
+    }
+
+    fn is_seek(&self) -> bool {
+        lt_bound(self.range.start_bound(), self.unixfs_read as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +446,38 @@ mod tests {
         }
     }
 
+    struct MockPool;
+
+    impl Allocator for MockPool {
+        fn as_ngx_pool_mut(&mut self) -> *mut ngx_pool_s {
+            std::ptr::null_mut()
+        }
+        fn alloc_chain(&mut self) -> *mut ngx_chain_s {
+            let link = Box::new(ngx_chain_s {
+                buf: std::ptr::null_mut(),
+                next: std::ptr::null_mut(),
+            });
+            Box::into_raw(link)
+        }
+        fn calloc_buf(&mut self) -> *mut ngx_buf_s {
+            let buf = Box::new(ngx_buf_s {
+                pos: std::ptr::null_mut(),
+                last: std::ptr::null_mut(),
+                file_pos: 0,
+                file_last: 0,
+                start: std::ptr::null_mut(),
+                end: std::ptr::null_mut(),
+                tag: std::ptr::null_mut(),
+                file: std::ptr::null_mut(),
+                shadow: std::ptr::null_mut(),
+                _bitfield_align_1: [0u8; 0],
+                _bitfield_1: ngx_buf_s::new_bitfield_1(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                num: 0,
+            });
+            Box::into_raw(buf)
+        }
+    }
+
     #[test]
     fn test_range_single_buffer() {
         use crate::bindings::*;
@@ -506,16 +496,11 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(..1024);
+        let mut ctx = CarBufferContext::new(..1024, MockPool);
 
         let mut buf = vec![];
 
-        let cl = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o1 = ctx.buffer(&l1 as *const _ as *mut _, || &cl as *const _ as *mut _);
+        let o1 = ctx.buffer(&l1 as *const _ as *mut _);
         let b1 = unsafe { MemoryBuffer::from_ngx_buf((*o1).buf) };
 
         assert!(b1.is_last());
@@ -544,16 +529,11 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(..3001);
+        let mut ctx = CarBufferContext::new(..3001, MockPool);
 
         let mut buf = vec![];
 
-        let cl = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o1 = ctx.buffer(&l1 as *const _ as *mut _, || &cl as *const _ as *mut _);
+        let o1 = ctx.buffer(&l1 as *const _ as *mut _);
         let b1 = unsafe { MemoryBuffer::from_ngx_buf((*o1).buf) };
 
         assert!(b1.is_last());
@@ -588,25 +568,16 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(..3500);
+        let mut ctx = CarBufferContext::new(..3500, MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -642,25 +613,16 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(..3500);
+        let mut ctx = CarBufferContext::new(..3500, MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -697,25 +659,16 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(4500..);
+        let mut ctx = CarBufferContext::new(4500.., MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -755,25 +708,16 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(5500..);
+        let mut ctx = CarBufferContext::new(5500.., MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -820,34 +764,21 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(5500..);
+        let mut ctx = CarBufferContext::new(5500.., MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl3 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         assert!(o.is_null());
         let b = MemoryBuffer::from_ngx_buf(l2.buf);
         assert!(b.is_empty());
 
-        let o = ctx.buffer(&l3 as *const _ as *mut _, || &cl3 as *const _ as *mut _);
+        let o = ctx.buffer(&l3 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -888,25 +819,16 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(5500..);
+        let mut ctx = CarBufferContext::new(5500.., MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -953,34 +875,21 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(5500..);
+        let mut ctx = CarBufferContext::new(5500.., MockPool);
 
         let mut buf = vec![];
 
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl3 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || &cl1 as *const _ as *mut _);
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         buf.extend_from_slice(b.as_bytes());
 
-        let o = ctx.buffer(&l2 as *const _ as *mut _, || &cl2 as *const _ as *mut _);
+        let o = ctx.buffer(&l2 as *const _ as *mut _);
         assert!(o.is_null());
         let b = MemoryBuffer::from_ngx_buf(l2.buf);
         assert!(b.is_empty());
 
-        let o = ctx.buffer(&l3 as *const _ as *mut _, || &cl3 as *const _ as *mut _);
+        let o = ctx.buffer(&l3 as *const _ as *mut _);
         let b = unsafe { MemoryBuffer::from_ngx_buf((*o).buf) };
 
         assert!(b.is_last());
@@ -1058,64 +967,21 @@ mod tests {
             next: &l2 as *const _ as *mut _,
         };
 
-        // new links mocked alloc from the ngx pool
-        let cl1 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl2 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl3 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl4 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl5 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl6 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
-        let cl7 = ngx_chain_s {
-            buf: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
-        };
+        let mut ctx = CarBufferContext::new(5500.., MockPool);
 
-        let mut cli = 0;
+        let o = ctx.buffer(&l1 as *const _ as *mut _);
 
-        let mut ctx = CarBufferContext::new(5500..);
-
-        let o = ctx.buffer(&l1 as *const _ as *mut _, || {
-            cli += 1;
-            let cl = match cli {
-                1 => &cl1,
-                2 => &cl2,
-                3 => &cl3,
-                4 => &cl4,
-                5 => &cl5,
-                6 => &cl6,
-                _ => &cl7,
-            };
-            cl as *const _ as *mut _
-        });
-
-        assert!(&cl1 as *const _ as *mut _ == o);
-
-        let mut result = vec![];
+        let mut result: Vec<u8> = vec![];
 
         let mut cl = o;
         while !cl.is_null() {
             let buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
             cl = unsafe { (*cl).next };
+            println!("** buf out: {:?} \n", buf.as_bytes());
             result.extend_from_slice(buf.as_bytes());
         }
+
+        assert_eq!(result.len(), exp.len());
 
         assert_eq!(result, exp);
     }
@@ -1142,17 +1008,15 @@ mod tests {
             next: std::ptr::null_mut(),
         };
 
-        let mut ctx = CarBufferContext::new(..);
+        let mut ctx = CarBufferContext::new(.., MockPool);
 
-        let o = ctx.buffer(&chain as *const _ as *mut _, || {
-            panic!("should not be called");
-        });
+        let o = ctx.buffer(&chain as *const _ as *mut _);
 
         assert!(o.is_null());
     }
 
     #[test]
-    fn test_buf_file_dag_pb_leaves() {
+    fn test_buf_file_dag_pb_leaves_end_bound() {
         use crate::bindings::*;
         use std::fs::File;
         use std::io::{BufReader, Read};
@@ -1182,17 +1046,7 @@ mod tests {
             chains.push(chain);
         }
 
-        // create a list of empty chain links to return in the callback
-        let mut empty_chains = Vec::with_capacity(chains.len());
-        for _ in 0..chains.len() {
-            let chain = ngx_chain_s {
-                buf: std::ptr::null_mut(),
-                next: std::ptr::null_mut(),
-            };
-            empty_chains.push(chain);
-        }
-
-        let mut ctx = CarBufferContext::new(..200000);
+        let mut ctx = CarBufferContext::new(..200000, MockPool);
 
         let mut buf = vec![];
 
@@ -1203,10 +1057,7 @@ mod tests {
             assert!(buf.len() <= 265577);
             let cl: *mut ngx_chain_t = &chains[i] as *const _ as *mut _;
             unsafe { (*cl).buf = &bufs[i] as *const _ as *mut _ };
-            let o = ctx.buffer(cl, || {
-                let chain = &empty_chains[i] as *const _ as *mut _;
-                chain
-            });
+            let o = ctx.buffer(cl);
 
             i += 1;
             // add the buffered data to the output buffer
@@ -1253,16 +1104,6 @@ mod tests {
             chains.push(chain);
         }
 
-        // create a list of empty chain links to return in the callback
-        let mut empty_chains = Vec::with_capacity(chains.len());
-        for _ in 0..chains.len() {
-            let chain = ngx_chain_s {
-                buf: std::ptr::null_mut(),
-                next: std::ptr::null_mut(),
-            };
-            empty_chains.push(chain);
-        }
-
         // create a list of empty buffers to return in the callback
         let mut empty_bufs = Vec::with_capacity(chains.len());
         for _ in 0..chains.len() {
@@ -1284,25 +1125,20 @@ mod tests {
         }
 
         // select a range in the second chunk
-        let mut ctx = CarBufferContext::new(263000..333333);
+        let mut ctx = CarBufferContext::new(263000..333333, MockPool);
 
         let mut buf = vec![];
 
         // iterate over the chains and buffer them
         // the callback will return an empty chain
         let mut i = 0;
-        let mut j = 0;
         while ctx.done == 0 {
             assert!(buf.len() <= 265577);
             let cl: *mut ngx_chain_t = &chains[i] as *const _ as *mut _;
             unsafe { (*cl).buf = &bufs[i] as *const _ as *mut _ };
-            let o = ctx.buffer(cl, || {
-                let chain = &empty_chains[i] as *const _ as *mut _;
-                i += 1;
-                chain
-            });
+            let o = ctx.buffer(cl);
 
-            j += 1;
+            i += 1;
             // add the buffered data to the output buffer
             let mut cl = o;
             while !cl.is_null() {
@@ -1348,16 +1184,6 @@ mod tests {
             chains.push(chain);
         }
 
-        // create a list of empty chain links to return in the callback
-        let mut empty_chains = Vec::with_capacity(chains.len());
-        for _ in 0..chains.len() {
-            let chain = ngx_chain_s {
-                buf: std::ptr::null_mut(),
-                next: std::ptr::null_mut(),
-            };
-            empty_chains.push(chain);
-        }
-
         // create a list of empty buffers to return in the callback
         let mut empty_bufs = Vec::with_capacity(chains.len());
         for _ in 0..chains.len() {
@@ -1378,29 +1204,30 @@ mod tests {
             empty_bufs.push(buf);
         }
 
+        let exp = [&car_data[..3382], &car_data[265577..265577 + 2 * 262195]].concat();
+
         // select a range in the second chunk
-        let mut ctx = CarBufferContext::new(555555..999999);
+        let mut ctx = CarBufferContext::new(555555..999999, MockPool);
 
         let mut buf = vec![];
 
         // iterate over the chains and buffer them
         // the callback will return an empty chain
         let mut i = 0;
-        let mut j = 0;
         while ctx.done == 0 {
             let cl: *mut ngx_chain_t = &chains[i] as *const _ as *mut _;
             unsafe { (*cl).buf = &bufs[i] as *const _ as *mut _ };
-            let o = ctx.buffer(cl, || {
-                let chain = &empty_chains[i] as *const _ as *mut _;
-                i += 1;
-                chain
-            });
 
-            j += 1;
+            let o = ctx.buffer(cl);
+            i += 1;
+
+            println!("null {}", o.is_null());
+
             // add the buffered data to the output buffer
             let mut cl = o;
             while !cl.is_null() {
                 let b = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+                println!("size {}", b.len());
                 cl = unsafe { (*cl).next };
                 b.as_bytes().iter().for_each(|b| buf.push(*b));
             }
@@ -1408,5 +1235,84 @@ mod tests {
 
         // header(57) + unxifs_dir(591) + unixfs_file(2734) + unixfs_block(262195) + unixfs_block(262195)
         assert_eq!(buf.len(), 57 + 591 + 2734 + 262195 + 262195);
+        assert_eq!(buf, exp);
     }
+
+    #[test]
+    fn test_frame_loop() {
+        use std::fs::File;
+        use std::io::{BufReader, Read};
+
+        let f = File::open("./sm-dagpb.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let mut car_data = vec![];
+        reader.read_to_end(&mut car_data).unwrap();
+
+        let factors = [1]; // [1, 5, 12, 31, 40, 55, 120, 300];
+
+        for factor in factors.iter() {
+            let section_size = car_data.len() / factor;
+
+            let sections = car_data.chunks(section_size);
+
+            let mut reader = Framed::new(..1500);
+
+            for section in sections {
+                println!("new section of size {}", section.len());
+                match reader.next(section) {
+                    Ok((start, end)) => {
+                        println!("start {} end {}", start, end);
+                        assert_eq!(end - start, section.len());
+                    }
+                    Err(e) => panic!("failed to read all bytes for factor {}: {}", factor, e),
+                }
+            }
+            assert_eq!(
+                reader.unixfs_read, 6119,
+                "failed to read all bytes for factor {}",
+                factor
+            );
+        }
+    }
+
+    // #[test]
+    // fn test_unixfs_pb_leaves() {
+    //     use crate::bindings::*;
+    //     use std::fs::File;
+    //     use std::io::{BufReader, Read};
+
+    //     let f = File::open("./sm-dagpb.car").unwrap();
+    //     let mut reader = BufReader::new(f);
+
+    //     let mut car_data = vec![];
+    //     reader.read_to_end(&mut car_data).unwrap();
+
+    // let mut buf = to_ngx_buf(&car_data[..]);
+
+    // let chain = ngx_chain_s {
+    //     buf: &mut buf as *mut _,
+    //     next: std::ptr::null_mut(),
+    // };
+
+    // let ranges = [..1024];
+
+    // println!("out dir {}", env!("OUT_DIR"));
+
+    // for r in ranges {
+    //     let mut ctx = CarBufferContext::new(r, MockPool);
+    //     let mut buf = vec![];
+    //     let cl: *mut ngx_chain_t = &chain as *const _ as *mut _;
+    //     let o = ctx.buffer(cl);
+
+    //     let mut cl = o;
+    //     while !cl.is_null() {
+    //         let b = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
+    //         cl = unsafe { (*cl).next };
+    //         b.as_bytes().iter().for_each(|b| buf.push(*b));
+    //     }
+
+    //     assert_eq!(buf.len(), 59 + 333 + 1073);
+    // }
+    // }
 }
