@@ -13,11 +13,11 @@ semantics to allow clients to perform incremental validation of responses.
 The plugin will only act on requests meeting the following conditions:
 
 * The 'Accept' header matches 'application/vnd.ipld.car'
-* A query parameter is set of the form 'bytes=x:y'
+* A query parameter is set of the form 'entity-bytes=x:y'
 
 ### Behavior
 
-The plugin will trigger a sub-request without the query parameter for bytes.
+The plugin will trigger a sub-request without the query parameter for `entity-bytes`.
 
 On the Car archive that is returned it will then filter some 'blocks'
 and end the response early based on the bytes requested.

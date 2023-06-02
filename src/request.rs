@@ -25,7 +25,7 @@ fn parse_bound(s: &str) -> Option<Bound<u64>> {
 fn parse_range(args: &str) -> Option<(Bound<u64>, Bound<u64>)> {
     let mut it = form_urlencoded::parse(args.as_bytes());
     while let Some((Cow::Borrowed(key), Cow::Borrowed(val))) = it.next() {
-        if key == "bytes" {
+        if key == "entity-bytes" {
             let mut iter = val.trim().splitn(2, ":");
             return Some((parse_bound(iter.next()?)?, parse_bound(iter.next()?)?));
         }
@@ -200,12 +200,12 @@ mod tests {
     #[test]
     fn test_parse_range() {
         assert_eq!(
-            parse_range("bytes=0:100").unwrap(),
+            parse_range("entity-bytes=0:100").unwrap(),
             (Bound::Included(0), Bound::Included(100))
         );
 
         assert_eq!(
-            parse_range("bytes=1024:*").unwrap(),
+            parse_range("entity-bytes=1024:*").unwrap(),
             (Bound::Included(1024), Bound::Unbounded)
         );
     }
