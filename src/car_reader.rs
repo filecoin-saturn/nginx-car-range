@@ -5,7 +5,7 @@ use cid::Cid;
 use core2::io::{self, Cursor};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::ops::{Bound, RangeBounds};
+use std::ops::{Bound, Range, RangeBounds};
 
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -21,6 +21,24 @@ fn lt_bound(bound: Bound<&u64>, val: u64) -> bool {
         Bound::Excluded(&b) => b > val,
         Bound::Unbounded => false,
     }
+}
+
+fn ranges_overlap<T: RangeBounds<u64>>(range1: T, range2: Range<usize>) -> bool {
+    let (start1, end1) = (
+        match range1.start_bound() {
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => *x + 1,
+            Bound::Unbounded => u64::MIN,
+        },
+        match range1.end_bound() {
+            Bound::Included(x) => *x + 1,
+            Bound::Excluded(x) => *x,
+            Bound::Unbounded => u64::MAX,
+        },
+    );
+    let (start2, end2) = (range2.start as u64, range2.end as u64);
+
+    start1 < end2 && start2 < end1
 }
 
 // CAR V1 header, should contain a single root and be CBOR encoded
@@ -171,23 +189,33 @@ enum FrameType {
     UnixFsData,
 }
 
-struct Framed<R: RangeBounds<u64>> {
+struct Framed<R: RangeBounds<u64> + Clone> {
+    // the size of the current frame
     len: usize,
+    // the size of the CAR block containing the current frame
     blk_len: usize,
+    // the position of the current frame in the CAR block
     blk_pos: usize,
+    // the buffer containing enough bytes to decode the varing or CID
     buf: Vec<u8>,
+    // the range of the CAR file we are reading from.
     range: R,
+    // the current position in the unixfs file data
     unixfs_read: usize,
+    // the size of the unixfs frame
+    unixfs_len: usize,
+    // the current frame type
     state: FrameType,
 }
 
-impl<R: RangeBounds<u64>> Framed<R> {
+impl<R: RangeBounds<u64> + Clone> Framed<R> {
     fn new(range: R) -> Self {
         Self {
             len: 0,
             blk_len: 0,
             blk_pos: 0,
             unixfs_read: 0,
+            unixfs_len: 0,
             range,
             buf: Vec::with_capacity(72),
             state: FrameType::CarHeader,
@@ -205,6 +233,10 @@ impl<R: RangeBounds<u64>> Framed<R> {
                     Some((cid, read)) => {
                         self.state = FrameType::Block;
                         current = &current[read..];
+
+                        if self.include_block() {
+                            pos += read;
+                        }
 
                         println!("cid: {:?}", cid);
                         match cid.codec() {
@@ -229,7 +261,11 @@ impl<R: RangeBounds<u64>> Framed<R> {
                     Some((size, read)) => {
                         current = &current[read..];
                         self.len = size;
-                        println!("len = {}", self.len);
+                        println!("len = {}, pos = {}", self.len, pos);
+
+                        if self.include_block() {
+                            pos += read;
+                        }
 
                         match self.state {
                             FrameType::Block => {
@@ -301,7 +337,7 @@ impl<R: RangeBounds<u64>> Framed<R> {
                             FrameType::UnixFsData => {
                                 self.blk_pos += read;
                                 println!("UnixFsData size: {}", size);
-                                self.unixfs_read += self.len;
+                                self.unixfs_len = size;
                                 println!("blk_len: {}, blk_pos: {}", self.blk_len, self.blk_pos);
                                 self.len = self.blk_len - self.blk_pos;
                             }
@@ -316,7 +352,6 @@ impl<R: RangeBounds<u64>> Framed<R> {
                                 if self.blk_len - self.blk_pos == 0 {
                                     self.state = FrameType::Block;
                                     self.blk_pos = 0;
-                                    pos += self.blk_len;
                                 } else {
                                     self.state = FrameType::UnixFs;
                                 }
@@ -328,12 +363,15 @@ impl<R: RangeBounds<u64>> Framed<R> {
                         current = &[];
                     }
                 };
+
             // end of the frame
             } else if current.len() >= self.len {
+                if self.include_block() {
+                    pos += self.len;
+                }
                 match self.state {
                     FrameType::CarHeader => {
                         self.state = FrameType::Block;
-                        pos += self.len;
                     }
                     FrameType::PBLinks => {
                         self.state = FrameType::MerkleDag;
@@ -342,7 +380,8 @@ impl<R: RangeBounds<u64>> Framed<R> {
                     FrameType::UnixFsData => {
                         self.blk_pos = 0;
                         self.state = FrameType::Block;
-                        pos += self.blk_len;
+                        self.unixfs_read += self.unixfs_len;
+                        self.unixfs_len = 0;
                     }
                     _ => {}
                 };
@@ -351,6 +390,9 @@ impl<R: RangeBounds<u64>> Framed<R> {
 
             // partial frame
             } else {
+                if self.include_block() {
+                    pos += current.len();
+                }
                 match self.state {
                     FrameType::PBLinks => {
                         self.blk_pos += current.len();
@@ -362,6 +404,23 @@ impl<R: RangeBounds<u64>> Framed<R> {
             }
         }
         Ok((0, pos))
+    }
+
+    fn include_block(&self) -> bool {
+        match self.state {
+            FrameType::CarHeader => true,
+            FrameType::UnixFsData => {
+                if self.unixfs_read == 0 {
+                    self.range.contains(&(self.unixfs_read as u64))
+                } else {
+                    ranges_overlap(
+                        self.range.clone(),
+                        self.unixfs_read..self.unixfs_read + self.unixfs_len,
+                    )
+                }
+            }
+            _ => self.range.contains(&(self.unixfs_read as u64)),
+        }
     }
 
     fn decode_len(&mut self, buf: &[u8]) -> Option<(usize, usize)> {
@@ -1249,30 +1308,39 @@ mod tests {
         let mut car_data = vec![];
         reader.read_to_end(&mut car_data).unwrap();
 
-        let factors = [1]; // [1, 5, 12, 31, 40, 55, 120, 300];
+        // let ranges = [[.., 6805], [..1500, 2538]];
+        let ranges = [(0..7000, 6805), (0..1500, 2538)];
 
-        for factor in factors.iter() {
-            let section_size = car_data.len() / factor;
+        for range in ranges.iter() {
+            let factors = [2]; // [1, 5, 12, 31, 40, 55, 120, 300];
 
-            let sections = car_data.chunks(section_size);
+            for factor in factors.iter() {
+                let section_size = car_data.len() / factor;
 
-            let mut reader = Framed::new(..1500);
+                let sections = car_data.chunks(section_size);
 
-            for section in sections {
-                println!("new section of size {}", section.len());
-                match reader.next(section) {
-                    Ok((start, end)) => {
-                        println!("start {} end {}", start, end);
-                        assert_eq!(end - start, section.len());
+                let mut reader = Framed::new(range.0.clone());
+
+                let mut buf = vec![];
+
+                for section in sections {
+                    println!("new section of size {}", section.len());
+                    match reader.next(section) {
+                        Ok((start, end)) => {
+                            println!("start {} end {}", start, end);
+                            buf.extend_from_slice(&section[start..end]);
+                        }
+                        Err(e) => panic!("failed to read all bytes for factor {}: {}", factor, e),
                     }
-                    Err(e) => panic!("failed to read all bytes for factor {}: {}", factor, e),
                 }
+                assert_eq!(buf.len(), range.1);
+
+                assert_eq!(
+                    reader.unixfs_read, 6119,
+                    "failed to read all bytes for factor {}",
+                    factor
+                );
             }
-            assert_eq!(
-                reader.unixfs_read, 6119,
-                "failed to read all bytes for factor {}",
-                factor
-            );
         }
     }
 
