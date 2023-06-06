@@ -238,7 +238,7 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             pos += read;
                         }
 
-                        println!("cid: {:?}", cid);
+                        println!("cid: {:?}, read {}", cid, read);
                         match cid.codec() {
                             0x55 => {
                                 self.state = FrameType::RawLeaf;
@@ -248,9 +248,15 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             }
                             _ => {}
                         };
+                        continue;
                     }
                     None => {
                         current = &[];
+
+                        if self.include_block() {
+                            pos = buf.len();
+                        }
+
                         continue;
                     }
                 };
@@ -261,7 +267,7 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                     Some((size, read)) => {
                         current = &current[read..];
                         self.len = size;
-                        println!("len = {}, pos = {}", self.len, pos);
+                        println!("len = {}, pos = {}, read = {}", self.len, pos, read);
 
                         if self.include_block() {
                             pos += read;
@@ -336,10 +342,13 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             }
                             FrameType::UnixFsData => {
                                 self.blk_pos += read;
-                                println!("UnixFsData size: {}", size);
+                                println!("UnixFsData size: {}, blk_pos: {}", size, self.blk_pos);
                                 self.unixfs_len = size;
-                                println!("blk_len: {}, blk_pos: {}", self.blk_len, self.blk_pos);
                                 self.len = self.blk_len - self.blk_pos;
+                                println!(
+                                    "blk_len: {}, blk_pos: {}, frame len: {}",
+                                    self.blk_len, self.blk_pos, self.len
+                                );
                             }
                             FrameType::PBData
                             | FrameType::DataType
@@ -361,6 +370,23 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                     }
                     None => {
                         current = &[];
+                        if self.include_block() {
+                            pos = buf.len();
+                        }
+                        if matches!(
+                            self.state,
+                            FrameType::MerkleDag
+                                | FrameType::UnixFs
+                                | FrameType::PBData
+                                | FrameType::DataType
+                                | FrameType::FileSize
+                                | FrameType::BlockSizes
+                                | FrameType::PBLinks
+                                | FrameType::UnixFsData
+                        ) {
+                            println!("buf len: {}", self.buf.len());
+                            self.blk_pos += self.buf.len();
+                        }
                     }
                 };
 
@@ -382,6 +408,8 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                         self.state = FrameType::Block;
                         self.unixfs_read += self.unixfs_len;
                         self.unixfs_len = 0;
+
+                        println!("unixfs_read: {}", self.unixfs_read);
                     }
                     _ => {}
                 };
@@ -393,8 +421,12 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                 if self.include_block() {
                     pos += current.len();
                 }
+                println!("partial frame, len: {}, pos {}", self.len, pos);
                 match self.state {
                     FrameType::PBLinks => {
+                        self.blk_pos += current.len();
+                    }
+                    FrameType::UnixFsData => {
                         self.blk_pos += current.len();
                     }
                     _ => {}
@@ -1308,11 +1340,10 @@ mod tests {
         let mut car_data = vec![];
         reader.read_to_end(&mut car_data).unwrap();
 
-        // let ranges = [[.., 6805], [..1500, 2538]];
         let ranges = [(0..7000, 6805), (0..1500, 2538)];
 
         for range in ranges.iter() {
-            let factors = [2]; // [1, 5, 12, 31, 40, 55, 120, 300];
+            let factors = [1, 5, 12, 31, 40, 55, 120, 300];
 
             for factor in factors.iter() {
                 let section_size = car_data.len() / factor;
@@ -1340,6 +1371,8 @@ mod tests {
                     "failed to read all bytes for factor {}",
                     factor
                 );
+
+                println!("\n");
             }
         }
     }
