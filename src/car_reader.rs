@@ -122,6 +122,7 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
             if sub > 0 || is_last {
                 self.done = 1;
                 buf.set_last_buf(true);
+                buf.set_last_in_chain(true);
             }
 
             if sub == buf.len() {
@@ -150,6 +151,10 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
         }
 
         out
+    }
+
+    pub fn done(&self) -> bool {
+        self.done == 1
     }
 }
 
