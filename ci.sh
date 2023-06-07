@@ -18,10 +18,10 @@ sleep 1
 # ls -lh partial.car
 # /usr/local/bin/car ls -v partial.car
 
-# test_range_request "0:1048576" "midfixture"
+test_range_request "0:1048576" "midfixture"
 
 # test_range_request "1048576:2097152" "midfixture"
 
-test_range_request "555555:999999" "bigfixture"
+# test_range_request "555555:999999" "bigfixture"
 
 cat /var/log/nginx/error.log
