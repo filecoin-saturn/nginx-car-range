@@ -23,6 +23,14 @@ fn lt_bound(bound: Bound<&u64>, val: u64) -> bool {
     }
 }
 
+fn gt_bound(bound: Bound<&u64>, val: u64) -> bool {
+    match bound {
+        Bound::Included(&b) => b <= val,
+        Bound::Excluded(&b) => b < val,
+        Bound::Unbounded => false,
+    }
+}
+
 fn ranges_overlap<T: RangeBounds<u64>>(range1: T, range2: Range<usize>) -> bool {
     let (start1, end1) = (
         match range1.start_bound() {
@@ -96,7 +104,24 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
             cl = unsafe { (*cl).next };
 
             // TODO: handle internal errors
-            let (skip, sub) = self.framed.next(buf.as_bytes()).unwrap();
+            let (start, end) = self.framed.next(buf.as_bytes()).unwrap();
+
+            let sub = buf.len() - end;
+
+            let is_last = match self.framed.range.end_bound() {
+                Bound::Included(&b) => b == self.framed.unixfs_read as u64,
+                Bound::Excluded(&b) => b - 1 == self.framed.unixfs_read as u64,
+                // if the range is unbounded the last buffer should already be
+                // set as last.
+                Bound::Unbounded => false,
+            };
+
+            println!("sub = {}, unixfs_read {}", sub, self.framed.unixfs_read);
+
+            if sub > 0 || is_last {
+                self.done = 1;
+                buf.set_last_buf(true);
+            }
 
             let mut cl = self.pool.alloc_chain();
             if cl.is_null() {
@@ -110,8 +135,8 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
                     ngx_buf_remove_end((*cl).buf, sub);
                 }
 
-                if skip > 0 {
-                    ngx_buf_remove_start((*cl).buf, skip);
+                if start > 0 {
+                    ngx_buf_remove_start((*cl).buf, start);
                 }
             }
             *ll = cl;
@@ -242,6 +267,7 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                         match cid.codec() {
                             0x55 => {
                                 self.state = FrameType::RawLeaf;
+                                self.len = self.blk_len - self.blk_pos;
                             }
                             0x70 => {
                                 self.state = FrameType::MerkleDag;
@@ -411,6 +437,11 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
 
                         println!("unixfs_read: {}", self.unixfs_read);
                     }
+                    FrameType::RawLeaf => {
+                        self.state = FrameType::Block;
+                        self.unixfs_read += self.len;
+                        self.blk_pos = 0;
+                    }
                     _ => {}
                 };
                 current = &current[self.len..];
@@ -428,6 +459,9 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                     }
                     FrameType::UnixFsData => {
                         self.blk_pos += current.len();
+                    }
+                    FrameType::RawLeaf => {
+                        self.unixfs_read += current.len();
                     }
                     _ => {}
                 };
