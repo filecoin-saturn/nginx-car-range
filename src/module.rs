@@ -139,7 +139,11 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
     unsafe {
         req.set_context(&ngx_car_range_module, ctx);
     }
-    ngx_log_debug_http!(req, "car_range header filter set context");
+    ngx_log_debug_http!(
+        req,
+        "car_range header filter set context, range {:?}",
+        range
+    );
 
     req.set_content_length_missing();
     req.set_filter_need_in_memory();
@@ -205,7 +209,7 @@ extern "C" fn ngx_car_range_body_filter(
 
         let out = (*ctx).buffer(body);
 
-        log_buf_info(req, out, "output");
+        log_buf_info(req, out, &format!("output, read {}", (*ctx).unixfs_read()));
 
         // indicates that the filter is delaying sending buffers.
         // TODO: not sure if it has any effect but in the brotli filter it is set.

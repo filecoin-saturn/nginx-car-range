@@ -156,6 +156,10 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
     pub fn done(&self) -> bool {
         self.done == 1
     }
+
+    pub fn unixfs_read(&self) -> usize {
+        self.framed.unixfs_read
+    }
 }
 
 // a function to remove bytes at the end of a ngx_buf_s mutable pointer
@@ -163,7 +167,7 @@ fn ngx_buf_remove_end(buf: *mut ngx_buf_s, len: usize) {
     // assert that the buffer is not null
     assert!(!buf.is_null());
     unsafe {
-        (*buf).last = (*buf).last.sub(len);
+        (*buf).last = (*buf).last.wrapping_sub(len);
         // if the buffer is in a file, adjust the file_last value
         if (*buf).in_file() == 1 {
             (*buf).file_last -= len as i64;
