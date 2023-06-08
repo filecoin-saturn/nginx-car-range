@@ -209,7 +209,15 @@ extern "C" fn ngx_car_range_body_filter(
 
         let out = (*ctx).buffer(body);
 
-        log_buf_info(req, out, &format!("output, read {}", (*ctx).unixfs_read()));
+        log_buf_info(
+            req,
+            out,
+            &format!(
+                "output, read {}, pos {}",
+                (*ctx).unixfs_read(),
+                (*ctx).pos()
+            ),
+        );
 
         // indicates that the filter is delaying sending buffers.
         // TODO: not sure if it has any effect but in the brotli filter it is set.

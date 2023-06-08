@@ -74,6 +74,7 @@ pub struct CarBufferContext<'a, R: RangeBounds<u64> + Clone, A: Allocator> {
     pool: A,
     framed: Framed<R>,
     done: usize,
+    pos: usize,
     _marker: PhantomData<&'a ()>,
 }
 
@@ -83,6 +84,7 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
             pool,
             framed: Framed::new(range),
             done: 0,
+            pos: 0,
             _marker: PhantomData,
         }
     }
@@ -107,6 +109,7 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
             // TODO: handle internal errors
             let (start, end) = self.framed.next(buf.as_bytes()).unwrap();
 
+            self.pos = end;
             let sub = buf.len() - end;
 
             let is_last = match self.framed.range.end_bound() {
@@ -159,6 +162,10 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
 
     pub fn unixfs_read(&self) -> usize {
         self.framed.unixfs_read
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
     }
 }
 
