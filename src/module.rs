@@ -1,7 +1,7 @@
 use crate::bindings::*;
 use crate::car_reader::CarBufferContext;
 use crate::log::ngx_log_debug_http;
-use crate::pool::{Buffer, MemoryBuffer};
+use crate::pool::{Allocator, Buffer, MemoryBuffer, Pool};
 use crate::request::*;
 use std::ops::Bound;
 use std::os::raw::{c_char, c_void};
@@ -133,11 +133,17 @@ extern "C" fn ngx_car_range_header_filter(r: *mut ngx_http_request_t) -> ngx_int
         None => bail!(),
     };
 
-    let ctx = req.pool().allocate(CarBufferContext::new(range)) as *mut c_void;
+    let ctx = req
+        .pool()
+        .allocate(CarBufferContext::new(range, req.pool())) as *mut c_void;
     unsafe {
         req.set_context(&ngx_car_range_module, ctx);
     }
-    ngx_log_debug_http!(req, "car_range header filter set context");
+    ngx_log_debug_http!(
+        req,
+        "car_range header filter set context, range {:?}",
+        range
+    );
 
     req.set_content_length_missing();
     req.set_filter_need_in_memory();
@@ -188,7 +194,7 @@ extern "C" fn ngx_car_range_body_filter(
 
     let ctx = unsafe {
         let cbc = req.get_context(&ngx_car_range_module)
-            as *mut CarBufferContext<(Bound<u64>, Bound<u64>)>;
+            as *mut CarBufferContext<(Bound<u64>, Bound<u64>), Pool>;
         if cbc.is_null() {
             ngx_log_debug_http!(req, "car_range body filter: no ctx: skipping");
             bail!();
@@ -197,9 +203,17 @@ extern "C" fn ngx_car_range_body_filter(
     };
 
     unsafe {
-        let out = (*ctx).buffer(body, || req.pool().alloc_chain());
+        let out = (*ctx).buffer(body);
 
-        log_buf_info(req, out, "output");
+        log_buf_info(
+            req,
+            out,
+            &format!(
+                "output, read {}, pos {}",
+                (*ctx).unixfs_read(),
+                (*ctx).pos()
+            ),
+        );
 
         // indicates that the filter is delaying sending buffers.
         // TODO: not sure if it has any effect but in the brotli filter it is set.
@@ -209,16 +223,18 @@ extern "C" fn ngx_car_range_body_filter(
             req.not_buffered();
         }
 
-        ngx_log_debug_http!(
-            req,
-            "car_range size {}, unixfs pos {}",
-            (*ctx).size,
-            (*ctx).unixfs_pos
-        );
-
-        ngx_http_next_body_filter
+        let status = ngx_http_next_body_filter
             .map(|cb| cb(r, out))
-            .unwrap_or(NGX_ERROR as ngx_int_t)
+            .unwrap_or(NGX_ERROR as ngx_int_t);
+
+        // Calling finalize request seems to cause some issues with file descriptors
+        // it helps telling nginx to stop calling the filter but it's unclear if it's
+        // better than the client simply closing the request when it gets the end trailer.
+        // if (*ctx).done() {
+        //     ngx_http_finalize_request(r, NGX_DONE as ngx_int_t);
+        // }
+
+        status
     }
 }
 

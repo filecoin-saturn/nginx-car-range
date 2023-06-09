@@ -10,13 +10,25 @@ impl Pool {
         assert!(!pool.is_null());
         Pool(pool)
     }
+}
 
-    pub fn alloc(&mut self, size: usize) -> *mut c_void {
-        unsafe { ngx_palloc(self.0, size) }
+impl Allocator for Pool {
+    fn as_ngx_pool_mut(&mut self) -> *mut ngx_pool_t {
+        self.0
+    }
+}
+
+pub trait Allocator {
+    fn as_ngx_pool_mut(&mut self) -> *mut ngx_pool_t;
+
+    fn alloc(&mut self, size: usize) -> *mut c_void {
+        let pool = self.as_ngx_pool_mut();
+        unsafe { ngx_palloc(pool, size) }
     }
 
     unsafe fn add_cleanup_for_value<T>(&mut self, value: *mut T) -> Result<(), ()> {
-        let cln = ngx_pool_cleanup_add(self.0, 0);
+        let pool = self.as_ngx_pool_mut();
+        let cln = ngx_pool_cleanup_add(pool, 0);
         if cln.is_null() {
             return Err(());
         }
@@ -26,7 +38,7 @@ impl Pool {
         Ok(())
     }
 
-    pub fn allocate<T>(&mut self, value: T) -> *mut T {
+    fn allocate<T>(&mut self, value: T) -> *mut T {
         unsafe {
             let p = self.alloc(mem::size_of::<T>()) as *mut T;
             ptr::write(p, value);
@@ -38,8 +50,15 @@ impl Pool {
         }
     }
 
-    pub fn alloc_chain(&mut self) -> *mut ngx_chain_t {
-        unsafe { ngx_alloc_chain_link(self.0) }
+    fn alloc_chain(&mut self) -> *mut ngx_chain_t {
+        let pool = self.as_ngx_pool_mut();
+        unsafe { ngx_alloc_chain_link(pool) }
+    }
+
+    fn calloc_buf(&mut self) -> *mut ngx_buf_t {
+        let size = std::mem::size_of::<ngx_buf_t>();
+        let pool = self.as_ngx_pool_mut();
+        unsafe { ngx_pcalloc(pool, size) as *mut ngx_buf_t }
     }
 }
 
