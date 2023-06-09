@@ -203,10 +203,6 @@ extern "C" fn ngx_car_range_body_filter(
     };
 
     unsafe {
-        if (*ctx).done() {
-            bail!();
-        }
-
         let out = (*ctx).buffer(body);
 
         log_buf_info(
