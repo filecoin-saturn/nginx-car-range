@@ -204,6 +204,7 @@ extern "C" fn ngx_car_range_body_filter(
 
     unsafe {
         if (*ctx).done() {
+            ngx_log_debug_http!(req, "car_range body filter: done: NGX_OK");
             return NGX_OK as ngx_int_t;
         }
 
