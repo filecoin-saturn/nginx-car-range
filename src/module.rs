@@ -223,9 +223,15 @@ extern "C" fn ngx_car_range_body_filter(
             req.not_buffered();
         }
 
-        ngx_http_next_body_filter
+        let status = ngx_http_next_body_filter
             .map(|cb| cb(r, out))
-            .unwrap_or(NGX_ERROR as ngx_int_t)
+            .unwrap_or(NGX_ERROR as ngx_int_t);
+
+        if (*ctx).done() {
+            ngx_http_finalize_request(r, NGX_DONE as ngx_int_t);
+        }
+
+        status
     }
 }
 
