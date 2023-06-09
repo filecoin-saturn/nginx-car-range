@@ -227,9 +227,12 @@ extern "C" fn ngx_car_range_body_filter(
             .map(|cb| cb(r, out))
             .unwrap_or(NGX_ERROR as ngx_int_t);
 
-        if (*ctx).done() {
-            ngx_http_finalize_request(r, NGX_DONE as ngx_int_t);
-        }
+        // Calling finalize request seems to cause some issues with file descriptors
+        // it helps telling nginx to stop calling the filter but it's unclear if it's
+        // better than the client simply closing the request when it gets the end trailer.
+        // if (*ctx).done() {
+        //     ngx_http_finalize_request(r, NGX_DONE as ngx_int_t);
+        // }
 
         status
     }

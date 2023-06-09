@@ -104,7 +104,6 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
         while !cl.is_null() {
             let mut buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
             cl = unsafe { (*cl).next };
-            println!("chain link with buffer size {}", buf.len());
 
             // TODO: handle internal errors
             let (start, end) = self.framed.next(buf.as_bytes()).unwrap();
@@ -119,8 +118,6 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
                 // set as last.
                 Bound::Unbounded => false,
             };
-
-            println!("sub = {}, unixfs_read {}", sub, self.framed.unixfs_read);
 
             if sub > 0 || is_last {
                 self.done = 1;
@@ -285,7 +282,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             pos += read;
                         }
 
-                        println!("cid: {:?}, read {}", cid, read);
                         match cid.codec() {
                             0x55 => {
                                 self.state = FrameType::RawLeaf;
@@ -318,7 +314,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                     Some((size, read)) => {
                         current = &current[read..];
                         self.len = size;
-                        println!("len = {}, pos = {}, read = {}", self.len, pos, read);
 
                         if self.include_block() {
                             pos += read;
@@ -341,7 +336,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                                     2 => {
                                         self.state = FrameType::PBLinks;
                                         self.len = 0;
-                                        println!("wire_type: {:?}", wire_type);
                                     }
                                     1 => {
                                         self.state = FrameType::PBData;
@@ -359,22 +353,18 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
 
                                 match tag {
                                     1 => {
-                                        println!("Data::Type, wire_type: {:?}", wire_type);
                                         self.state = FrameType::DataType;
                                         self.len = 0;
                                     }
                                     2 => {
-                                        println!("Data::Data, wire_type: {:?}", wire_type);
                                         self.state = FrameType::UnixFsData;
                                         self.len = 0;
                                     }
                                     3 => {
-                                        println!("Data::FileSize, wire_type: {:?}", wire_type);
                                         self.state = FrameType::FileSize;
                                         self.len = 0;
                                     }
                                     4 => {
-                                        println!("Data::Blocksizes, wire_type: {:?}", wire_type);
                                         self.state = FrameType::BlockSizes;
                                         self.len = 0;
                                     }
@@ -389,24 +379,17 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             }
                             FrameType::PBLinks => {
                                 self.blk_pos += read;
-                                println!("PBLinks, blk_pos: {}", self.blk_pos);
                             }
                             FrameType::UnixFsData => {
                                 self.blk_pos += read;
-                                println!("UnixFsData size: {}, blk_pos: {}", size, self.blk_pos);
                                 self.unixfs_len = size;
                                 self.len = self.blk_len - self.blk_pos;
-                                println!(
-                                    "blk_len: {}, blk_pos: {}, frame len: {}",
-                                    self.blk_len, self.blk_pos, self.len
-                                );
                             }
                             FrameType::PBData
                             | FrameType::DataType
                             | FrameType::FileSize
                             | FrameType::BlockSizes => {
                                 self.blk_pos += read;
-                                println!("frame_type: {:?}, blk_pos: {}", self.state, self.blk_pos);
                                 self.len = 0;
 
                                 if self.blk_len - self.blk_pos == 0 {
@@ -435,7 +418,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                                 | FrameType::PBLinks
                                 | FrameType::UnixFsData
                         ) {
-                            println!("buf len: {}", self.buf.len());
                             self.blk_pos += self.buf.len();
                         }
                     }
@@ -446,7 +428,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                 if self.include_block() {
                     pos += self.len;
                 }
-                println!("end frame, len: {}, pos: {}", self.len, pos);
                 match self.state {
                     FrameType::CarHeader => {
                         self.state = FrameType::Block;
@@ -460,8 +441,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                         self.state = FrameType::Block;
                         self.unixfs_read += self.unixfs_len;
                         self.unixfs_len = 0;
-
-                        println!("unixfs_read: {}", self.unixfs_read);
                     }
                     _ => {}
                 };
@@ -473,7 +452,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                 if self.include_block() {
                     pos += current.len();
                 }
-                println!("partial frame, len: {}, pos {}", self.len, pos);
                 match self.state {
                     FrameType::PBLinks => {
                         self.blk_pos += current.len();
@@ -509,7 +487,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
     }
 
     fn decode_len(&mut self, buf: &[u8]) -> Option<(usize, usize)> {
-        println!("decode_len");
         let mut i = 0;
         loop {
             self.buf.push(buf[i]);
@@ -531,7 +508,6 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
     }
 
     fn decode_cid(&mut self, buf: &[u8]) -> Option<(Cid, usize)> {
-        println!("decode_cid");
         let mut i = 0;
 
         let filled = self.buf.len();
