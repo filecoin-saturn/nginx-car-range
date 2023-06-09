@@ -18,7 +18,7 @@ sleep 1
 # ls -lh partial.car
 # /usr/local/bin/car ls -v partial.car
 
-# test_range_request "0:1048576" "midfixture"
+test_range_request "0:1048576" "midfixture"
 
 test_range_request "0:1048576" "bigfixture"
 
