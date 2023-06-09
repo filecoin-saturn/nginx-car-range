@@ -490,20 +490,21 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
         Ok((0, pos))
     }
 
+    // since the end bound is inclusive, we add 1 to the unixfs cursor
     fn include_block(&self) -> bool {
         match self.state {
             FrameType::CarHeader => true,
             FrameType::UnixFsData | FrameType::RawLeaf => {
                 if self.unixfs_read == 0 {
-                    self.range.contains(&(self.unixfs_read as u64))
+                    self.range.contains(&(self.unixfs_read as u64 + 1))
                 } else {
                     ranges_overlap(
                         self.range.clone(),
-                        self.unixfs_read..self.unixfs_read + self.unixfs_len,
+                        self.unixfs_read + 1..self.unixfs_read + self.unixfs_len,
                     )
                 }
             }
-            _ => self.range.contains(&(self.unixfs_read as u64)),
+            _ => self.range.contains(&(self.unixfs_read as u64 + 1)),
         }
     }
 
@@ -1400,7 +1401,7 @@ mod tests {
         let mut car_data = vec![];
         reader.read_to_end(&mut car_data).unwrap();
 
-        let ranges = [(0..7000, 6805), (0..1500, 2538)];
+        let ranges = [(0..7000, 6805), (0..1500, 2538), (0..1025, 1465)];
 
         for range in ranges.iter() {
             let factors = [1, 5, 12, 31, 40, 55, 120, 300];
