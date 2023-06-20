@@ -105,10 +105,13 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
             let mut buf = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
             cl = unsafe { (*cl).next };
 
+            println!("==> buf.len(): {}", buf.len());
+
             // TODO: handle internal errors
             let parts = self.framed.next(buf.as_bytes()).unwrap();
 
             for (start, end) in parts {
+                println!("==> start: {}, end: {}", start, end);
                 self.pos = end;
                 let sub = buf.len() - end;
 
@@ -120,7 +123,8 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
                     Bound::Unbounded => false,
                 };
 
-                if sub > 0 || is_last {
+                if sub > 0 && !self.framed.is_seek() || is_last {
+                    println!("==> sub: {}, is_last: {}", sub, is_last);
                     self.done = 1;
                     buf.set_last_buf(true);
                     buf.set_last_in_chain(true);
@@ -521,9 +525,11 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                 self.len = 0;
             // partial frame
             } else {
-                println!("partial frame, len: {}", current.len());
+                println!("partial frame, len: {}, maybe: {}", current.len(), maybe);
                 if self.include_block() {
                     pos += current.len();
+                    pos += maybe;
+                    maybe = 0;
                 } else {
                     println!("skipping block pos: {}", pos);
                     maybe += current.len();
@@ -683,6 +689,25 @@ mod tests {
         }
     }
 
+    // check the CAR file is a valid car file and contains the given blocks only
+    fn check_car(buf: &[u8], blks: Vec<Cid>) {
+        let mut current = buf;
+        let (size, read) = usize::decode_var(current).unwrap();
+        let header: CarHeader =
+            serde_ipld_dagcbor::from_slice(&current[read..size + read]).unwrap();
+        assert_eq!(header.roots[0], blks[0]);
+        current = &buf[size + read..];
+
+        for cid in blks {
+            let (size, read) = usize::decode_var(current).unwrap();
+            let mut reader = Cursor::new(&current[read..]);
+            assert_eq!(cid, Cid::read_bytes(&mut reader).unwrap());
+
+            current = &current[size + read..];
+        }
+        assert_eq!(current.len(), 0);
+    }
+
     #[test]
     fn test_range_single_buffer() {
         use crate::bindings::*;
@@ -840,7 +865,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_range_start_multi_buffers() {
         use crate::bindings::*;
         use std::fs::File;
@@ -1366,7 +1390,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_buf_dag_pb_leaves_offset_2blks() {
         use crate::bindings::*;
         use std::fs::File;
@@ -1417,8 +1440,6 @@ mod tests {
             empty_bufs.push(buf);
         }
 
-        let exp = [&car_data[..3382], &car_data[265577..265577 + 2 * 262195]].concat();
-
         // select a range in the second chunk
         let mut ctx = CarBufferContext::new(555555..999999, MockPool);
 
@@ -1434,13 +1455,13 @@ mod tests {
             let o = ctx.buffer(cl);
             i += 1;
 
-            println!("null {}", o.is_null());
+            println!("-> buffered, null {}", o.is_null());
 
             // add the buffered data to the output buffer
             let mut cl = o;
             while !cl.is_null() {
                 let b = unsafe { MemoryBuffer::from_ngx_buf((*cl).buf) };
-                println!("size {}", b.len());
+                println!("> size {}", b.len());
                 cl = unsafe { (*cl).next };
                 b.as_bytes().iter().for_each(|b| buf.push(*b));
             }
@@ -1448,26 +1469,19 @@ mod tests {
 
         // header(57) + unxifs_dir(591) + unixfs_file(2734) + unixfs_block(262195) + unixfs_block(262195)
         assert_eq!(buf.len(), 57 + 591 + 2734 + 262195 + 262195);
-        assert_eq!(buf, exp);
-    }
 
-    // check the CAR file is a valid car file and contains the given blocks only
-    fn check_car(buf: &[u8], blks: Vec<Cid>) {
-        let mut current = buf;
-        let (size, read) = usize::decode_var(current).unwrap();
-        let header: CarHeader =
-            serde_ipld_dagcbor::from_slice(&current[read..size + read]).unwrap();
-        assert_eq!(header.roots[0], blks[0]);
-        current = &buf[size + read..];
-
-        for cid in blks {
-            let (size, read) = usize::decode_var(current).unwrap();
-            let mut reader = Cursor::new(&current[read..]);
-            assert_eq!(cid, Cid::read_bytes(&mut reader).unwrap());
-
-            current = &current[size + read..];
-        }
-        assert_eq!(current.len(), 0);
+        check_car(
+            &buf,
+            vec![
+                "QmafUYju2Ab4ETi5HJG1cqjmnjs2xw9PUuBKzU7Hi3zvXU",
+                "QmRsGoycNMQAJbeLAhuPBFtYb3prVfamDExWj8FYQNkFxr",
+                "QmYr7bPfP1Jxxnie8n42NCXHrWEj3Z8rXygY7YuXBzdZhj",
+                "Qma5rt7vkYcoMwrFMdoRzzgHUE3A3SptoHfHKRHkmVQvvB",
+            ]
+            .iter()
+            .map(|b| b.clone().try_into().unwrap())
+            .collect(),
+        );
     }
 
     struct TC {
