@@ -130,7 +130,7 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
                     buf.set_last_in_chain(true);
                 }
 
-                if sub == buf.len() {
+                if sub == buf.len() || start == end {
                     buf.set_empty();
                     continue;
                 }
@@ -153,6 +153,9 @@ impl<'a, R: RangeBounds<u64> + Clone, A: Allocator> CarBufferContext<'a, R, A> {
                 }
                 *ll = cl;
                 ll = unsafe { &mut (*cl).next };
+
+                // TODO: for now we don't handle splitting buffers
+                break;
             }
         }
 
@@ -315,6 +318,11 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                                 unimplemented!();
                             }
                         };
+
+                        if self.include_block() || self.blk_len < 1000 {
+                            pos += maybe;
+                            maybe = 0;
+                        }
                         continue;
                     }
                     None => {
@@ -351,6 +359,12 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                                 self.blk_len = size;
                                 self.len = 0;
                                 self.has_links = false;
+
+                                // best effort
+                                if self.blk_len < 1000 {
+                                    pos += maybe;
+                                    maybe = 0;
+                                }
                             }
                             FrameType::MerkleDag => {
                                 self.blk_pos += read;
@@ -483,6 +497,8 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                 println!("end of frame, len: {}", self.len);
                 if self.include_block() {
                     pos += self.len;
+                    pos += maybe;
+                    maybe = 0;
                 } else {
                     println!("skipping block pos: {}", pos);
                     maybe += self.len;
@@ -503,8 +519,10 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
                             );
                             if pos > start {
                                 ranges.push((start, pos));
+                                start = start + pos + maybe;
+                            } else {
+                                start += maybe;
                             }
-                            start = start + pos + maybe;
                             pos = start;
                             maybe = 0;
                         }
@@ -558,7 +576,7 @@ impl<R: RangeBounds<u64> + Clone> Framed<R> {
     // since the end bound is inclusive, we add 1 to the unixfs cursor
     fn include_block(&self) -> bool {
         println!(
-            "include block: {:?}, unixfs_read {}, unixfs_len {}",
+            "?include block? {:?}, unixfs_read {}, unixfs_len {}",
             self.state, self.unixfs_read, self.unixfs_len
         );
         match self.state {
@@ -907,10 +925,22 @@ mod tests {
 
         // header + unxifs_root + raw_block(1000) + raw_block(1000) + raw_block(157)
         assert_eq!(buf.len(), 59 + 379 + 1038 + 1038 + 157);
+
+        check_car(
+            &buf,
+            vec![
+                "bafybeihnavzumupz6aqh3hi2swo6wyjmgij2y62qbcsadrqa4trwo5zrre",
+                "bafkreidkf4neosfwhflqnuzuwidksaqjhq3q7mro2eha6t42fzoea4hgtq",
+                "bafkreigy7zqrooauu5pift4gmzkjgov3mob57e2nawkxxp5hpg2in4yomq",
+                "bafkreick5l3gihtmimedxayy5m4dlex3uxaiztaa2kd6rko4nlj3huuugm",
+            ]
+            .iter()
+            .map(|s| s.clone().try_into().unwrap())
+            .collect(),
+        );
     }
 
     #[test]
-    #[ignore]
     fn test_range_filter_start_multi_buffers() {
         use crate::bindings::*;
         use std::fs::File;
@@ -961,7 +991,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_range_skip_start_multi_buffers() {
         use crate::bindings::*;
         use std::fs::File;
@@ -977,10 +1006,6 @@ mod tests {
         let mut buf3 = to_ngx_buf(&car_data[4590..]);
         buf3.set_last_buf(1);
 
-        let mut expected = vec![];
-        expected.extend_from_slice(&car_data[..438]);
-        expected.extend_from_slice(&car_data[5628..]);
-
         let l3 = ngx_chain_s {
             buf: &buf3 as *const _ as *mut _,
             next: std::ptr::null_mut(),
@@ -1018,12 +1043,20 @@ mod tests {
         buf.extend_from_slice(b.as_bytes());
 
         // header + unxifs_root + raw_block(1000) + raw_block(157)
-        assert_eq!(buf.len(), 59 + 379 + 1038 + 157);
-        assert_eq!(buf, expected);
+        check_car(
+            &buf,
+            vec![
+                "bafybeihnavzumupz6aqh3hi2swo6wyjmgij2y62qbcsadrqa4trwo5zrre",
+                "bafkreigy7zqrooauu5pift4gmzkjgov3mob57e2nawkxxp5hpg2in4yomq",
+                "bafkreick5l3gihtmimedxayy5m4dlex3uxaiztaa2kd6rko4nlj3huuugm",
+            ]
+            .iter()
+            .map(|s| s.clone().try_into().unwrap())
+            .collect(),
+        );
     }
 
     #[test]
-    #[ignore]
     fn test_range_filter_start_missaligned_buffers() {
         use crate::bindings::*;
         use std::fs::File;
@@ -1037,10 +1070,6 @@ mod tests {
         let buf1 = to_ngx_buf(&car_data[..4096]);
         let mut buf2 = to_ngx_buf(&car_data[4096..]);
         buf2.set_last_buf(1);
-
-        let mut expected = vec![];
-        expected.extend_from_slice(&car_data[..438]);
-        expected.extend_from_slice(&car_data[5628..]);
 
         let l2 = ngx_chain_s {
             buf: &buf2 as *const _ as *mut _,
@@ -1069,12 +1098,20 @@ mod tests {
         buf.extend_from_slice(b.as_bytes());
 
         // header + unxifs_root + raw_block(1000) + raw_block(157)
-        assert_eq!(buf.len(), 59 + 379 + 1038 + 157);
-        assert_eq!(buf, expected);
+        check_car(
+            &buf,
+            vec![
+                "bafybeihnavzumupz6aqh3hi2swo6wyjmgij2y62qbcsadrqa4trwo5zrre",
+                "bafkreigy7zqrooauu5pift4gmzkjgov3mob57e2nawkxxp5hpg2in4yomq",
+                "bafkreick5l3gihtmimedxayy5m4dlex3uxaiztaa2kd6rko4nlj3huuugm",
+            ]
+            .iter()
+            .map(|s| s.clone().try_into().unwrap())
+            .collect(),
+        );
     }
 
     #[test]
-    #[ignore]
     fn test_range_skip_start_shorter_buffers() {
         use crate::bindings::*;
         use std::fs::File;
@@ -1090,10 +1127,6 @@ mod tests {
         let mut buf3 = to_ngx_buf(&car_data[3100..]);
         buf3.set_last_buf(1);
 
-        let mut expected = vec![];
-        expected.extend_from_slice(&car_data[..438]);
-        expected.extend_from_slice(&car_data[5628..]);
-
         let l3 = ngx_chain_s {
             buf: &buf3 as *const _ as *mut _,
             next: std::ptr::null_mut(),
@@ -1131,14 +1164,22 @@ mod tests {
         buf.extend_from_slice(b.as_bytes());
 
         // header + unxifs_root + raw_block(1000) + raw_block(157)
-        assert_eq!(buf.len(), 59 + 379 + 1038 + 157);
-        assert_eq!(buf, expected);
+        check_car(
+            &buf,
+            vec![
+                "bafybeihnavzumupz6aqh3hi2swo6wyjmgij2y62qbcsadrqa4trwo5zrre",
+                "bafkreigy7zqrooauu5pift4gmzkjgov3mob57e2nawkxxp5hpg2in4yomq",
+                "bafkreick5l3gihtmimedxayy5m4dlex3uxaiztaa2kd6rko4nlj3huuugm",
+            ]
+            .iter()
+            .map(|s| s.clone().try_into().unwrap())
+            .collect(),
+        );
     }
 
     // test against some small buffers that are not aligned with the block size.
     // the buffers were generated by a real nginx instance.
     #[test]
-    #[ignore]
     fn test_range_tiny_buffers() {
         use crate::bindings::*;
 
@@ -1309,7 +1350,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_buf_file_dag_pb_leaves_offset() {
         use crate::bindings::*;
         use std::fs::File;
