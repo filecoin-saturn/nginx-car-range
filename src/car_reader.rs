@@ -7,14 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::{Bound, Range, RangeBounds};
 
-mod unixfs_pb {
-    include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
-}
-
-mod dag_pb {
-    include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
-}
-
 fn lt_bound(bound: Bound<&u64>, val: u64) -> bool {
     match bound {
         Bound::Included(&b) => b >= val,
@@ -1623,5 +1615,50 @@ mod tests {
                 println!("\n");
             }
         }
+    }
+
+    #[test]
+    fn test_range_start_stall() {
+        use std::fs::File;
+        use std::io::{BufReader, Read};
+
+        let f = File::open("./fixture3.car").unwrap();
+        let mut reader = BufReader::new(f);
+
+        let mut car_data = vec![];
+        reader.read_to_end(&mut car_data).unwrap();
+
+        let mut reader = Framed::new(1048576..2097151);
+
+        let mut buf = vec![];
+
+        let parts = reader
+            .next(&car_data[..])
+            .expect("failed to read all bytes");
+        for (start, end) in parts {
+            println!("=> start {} end {}", start, end);
+            buf.extend_from_slice(&car_data[start..end]);
+        }
+
+        check_car(
+            &buf[..],
+            vec![
+                "bafybeieyd7lbyfjexjaqb6wvryaixjcmgnpljaca5umfwkbit72ozaotem"
+                    .parse()
+                    .unwrap(),
+                "bafkreiafwydontni6cnaaikpyukjnxcs6npacnzw33yzla2ovst63mmmzu"
+                    .parse()
+                    .unwrap(),
+                "bafkreiejzhxinfxxobf5drbzcpvyc7dpcapoki3x47p2oy4g2ysw2wqtma"
+                    .parse()
+                    .unwrap(),
+                "bafkreidxdztf4f5pimr2evnz36eskzmf35sa2vb3wea6fqyl5tipcxip74"
+                    .parse()
+                    .unwrap(),
+                "bafkreicqajwgsr5z2b4qprhy6c7fexrwmqtvaldcaaiswhcgrkcbmwexmu"
+                    .parse()
+                    .unwrap(),
+            ],
+        );
     }
 }
