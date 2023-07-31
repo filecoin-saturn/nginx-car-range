@@ -26,4 +26,6 @@ test_range_request "1048576:2097152" "midfixture"
 
 test_range_request "555555:999999" "bigfixture"
 
+test_range_request "1048576:2097151" "fixture3"
+
 cat /var/log/nginx/error.log

@@ -3,11 +3,6 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    prost_build::Config::new()
-        .bytes([".unixfs_pb.Data", ".merkledag_pb.PBNode.Data"])
-        .compile_protos(&["src/unixfs.proto", "src/merkledag.proto"], &["src"])
-        .expect("unable to generate unixfs protobufs");
-
     // Path to the nginx repo in the local file system
     let nginx_dir = env::var("NGINX_DIR").unwrap_or(String::from("../nginx"));
 
